@@ -14,8 +14,8 @@ setup() {
 @test "init-env stamps a 0600 template" {
     cfctx init-env foundationA
     [ -f "$CFCTX_ROOT/foundationA/context.env" ]
-    perms=$(stat -f '%Lp' "$CFCTX_ROOT/foundationA/context.env" 2>/dev/null \
-             || stat -c '%a' "$CFCTX_ROOT/foundationA/context.env")
+    perms=$(stat -c '%a' "$CFCTX_ROOT/foundationA/context.env" 2>/dev/null \
+             || stat -f '%Lp' "$CFCTX_ROOT/foundationA/context.env" 2>/dev/null)
     [ "$perms" = "600" ]
 }
 
@@ -84,8 +84,8 @@ EOF
     cfctx init-env src
     cfctx cp src dst
     [ -f "$CFCTX_ROOT/dst/context.env" ]
-    perms=$(stat -f '%Lp' "$CFCTX_ROOT/dst/context.env" 2>/dev/null \
-             || stat -c '%a' "$CFCTX_ROOT/dst/context.env")
+    perms=$(stat -c '%a' "$CFCTX_ROOT/dst/context.env" 2>/dev/null \
+             || stat -f '%Lp' "$CFCTX_ROOT/dst/context.env" 2>/dev/null)
     [ "$perms" = "600" ]
 }
 
@@ -109,8 +109,8 @@ EOF
     [ -f "$CFCTX_ROOT/tdc/context.env" ]
 
     # File permissions
-    perms=$(stat -f '%Lp' "$CFCTX_ROOT/tdc/context.env" 2>/dev/null \
-             || stat -c '%a' "$CFCTX_ROOT/tdc/context.env")
+    perms=$(stat -c '%a' "$CFCTX_ROOT/tdc/context.env" 2>/dev/null \
+             || stat -f '%Lp' "$CFCTX_ROOT/tdc/context.env" 2>/dev/null)
     [ "$perms" = "600" ]
 
     # Content
@@ -147,8 +147,8 @@ EOF
     [ -f "$CFCTX_ROOT/cdc/om-ca.pem" ]
     grep -q 'BEGIN CERTIFICATE' "$CFCTX_ROOT/cdc/om-ca.pem"
 
-    perms=$(stat -f '%Lp' "$CFCTX_ROOT/cdc/om-ca.pem" 2>/dev/null \
-             || stat -c '%a' "$CFCTX_ROOT/cdc/om-ca.pem")
+    perms=$(stat -c '%a' "$CFCTX_ROOT/cdc/om-ca.pem" 2>/dev/null \
+             || stat -f '%Lp' "$CFCTX_ROOT/cdc/om-ca.pem" 2>/dev/null)
     [ "$perms" = "600" ]
 
     # Env file references the pem via $CF_HOME

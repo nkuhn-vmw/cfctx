@@ -58,15 +58,17 @@ Layered on top of that primitive, cfctx adds:
 ## Install
 
 ```bash
-git clone https://github.com/<you>/cfctx.git ~/.local/share/cfctx
-echo 'source ~/.local/share/cfctx/cfctx.sh' >> ~/.zshrc      # or ~/.bashrc
+git clone https://github.com/nkuhn-vmw/cfctx.git ~/.local/share/cfctx
+bash ~/.local/share/cfctx/install.sh    # idempotently wires ~/.zshrc or ~/.bashrc
 exec $SHELL
 ```
 
-…or, from inside a local clone:
+…or manually:
 
 ```bash
-bash install.sh    # idempotently appends the source line to your rc file
+git clone https://github.com/nkuhn-vmw/cfctx.git ~/.local/share/cfctx
+echo 'source ~/.local/share/cfctx/cfctx.sh' >> ~/.zshrc
+exec $SHELL
 ```
 
 If you already keep `om` env files in a single directory, point cfctx at

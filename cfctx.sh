@@ -148,9 +148,12 @@ _cfctx_source_env() {
     [[ -f "$env_file" ]] || return 0
 
     # Enforce 0600 — refuse to source a world-readable creds file.
+    # GNU stat (Linux) uses -c; BSD stat (macOS) uses -f. Try GNU first
+    # because `stat -f '%Lp'` on GNU silently dumps filesystem info to
+    # stdout with exit code 1 — that would pollute $perms on the || path.
     local perms
-    if perms=$(stat -f '%Lp' "$env_file" 2>/dev/null); then :
-    elif perms=$(stat -c '%a' "$env_file" 2>/dev/null); then :
+    if perms=$(stat -c '%a' "$env_file" 2>/dev/null); then :
+    elif perms=$(stat -f '%Lp' "$env_file" 2>/dev/null); then :
     else perms=""; fi
 
     if [[ -n "$perms" && "$perms" != "600" && "$perms" != "400" ]]; then
@@ -1319,7 +1322,7 @@ _cfctx_cmd_doctor() {
                 continue
             fi
             # Perms
-            perms=$(stat -f '%Lp' "$env_file" 2>/dev/null || stat -c '%a' "$env_file" 2>/dev/null)
+            perms=$(stat -c '%a' "$env_file" 2>/dev/null || stat -f '%Lp' "$env_file" 2>/dev/null)
             if [[ "$perms" == "600" || "$perms" == "400" ]]; then
                 echo "    [${_tick}] context.env mode $perms"
             else
