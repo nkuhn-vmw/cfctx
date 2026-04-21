@@ -35,3 +35,88 @@ jobs:
           fi
       - name: run bats
         run: bats tests/
+
+  # cfctx.sh is dual-shell (bash + zsh). bats runs under bash only, so a
+  # dedicated zsh smoke test catches zsh-specific breakage (word-split,
+  # pattern chars, ${=var}, etc.) on both platforms.
+  zsh-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUNNER_OS_NAME: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: install zsh (Linux only — macOS ships it)
+        run: |
+          if [[ "$RUNNER_OS_NAME" != "macos-latest" ]]; then
+            sudo apt-get update -y && sudo apt-get install -y zsh
+          fi
+      - name: source cfctx.sh under zsh and exercise core paths
+        run: |
+          zsh -c '
+            set -e
+            export CFCTX_ROOT="$(mktemp -d)"
+            source ./cfctx.sh
+
+            echo "=== version ==="
+            cfctx version
+
+            echo "=== help ==="
+            cfctx help | head -5
+
+            echo "=== prompt snippets emit cleanly ==="
+            cfctx prompt zsh      | grep -q "setopt prompt_subst"
+            cfctx prompt bash     | grep -q "_cfctx_prompt_segment"
+            cfctx prompt starship | grep -q "\[custom.cfctx\]"
+
+            echo "=== discovery helper works under zsh (${=var} word-split path) ==="
+            om_dir="$(mktemp -d)"
+            cat > "$om_dir/om-cli-zsh-foundation.yml" <<EOF
+          target: https://opsmgr.example.com
+          username: admin
+          password: pw
+          EOF
+            result="$(_cfctx_discover_om_file "$om_dir" zsh-foundation)"
+            [[ "$result" == "$om_dir/om-cli-zsh-foundation.yml" ]] || { echo FAIL; exit 1; }
+
+            echo "=== custom CFCTX_OM_ENV_PATTERNS (NAME placeholder) ==="
+            cat > "$om_dir/found-zdemo.yaml" <<EOF
+          target: https://x.example.com
+          EOF
+            result2="$(CFCTX_OM_ENV_PATTERNS=found-NAME.yaml _cfctx_discover_om_file "$om_dir" zdemo)"
+            [[ "$result2" == "$om_dir/found-zdemo.yaml" ]] || { echo FAIL; exit 1; }
+
+            echo "=== listing works (ansi safe on zsh when piped) ==="
+            cfctx newfound --create --no-enrich --no-login >/dev/null
+            cfctx | grep -q newfound
+
+            echo "=== zsh smoke passed ==="
+          '
+
+  # Exercises install.sh end-to-end in a disposable HOME so we don't mutate
+  # the runner's default rc files. Validates idempotency and the path where
+  # a brand-new user would land.
+  install-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.sh wires ~/.bashrc exactly once
+        run: |
+          tmp_home="$(mktemp -d)"
+          HOME="$tmp_home" SHELL=/bin/bash bash install.sh
+          grep -q '# >>> cfctx >>>' "$tmp_home/.bashrc" || { echo "install didn't wire rc"; exit 1; }
+
+          # Re-run; still exactly one block.
+          HOME="$tmp_home" SHELL=/bin/bash bash install.sh
+          count="$(grep -c '# >>> cfctx >>>' "$tmp_home/.bashrc")"
+          if [[ "$count" != "1" ]]; then
+            echo "install.sh not idempotent — found $count marker(s)"; exit 1
+          fi
+
+          # The installed cfctx.sh must be sourceable in a fresh bash.
+          installed="$tmp_home/.local/share/cfctx/cfctx.sh"
+          [[ -f "$installed" ]] || { echo "installed file missing"; exit 1; }
+          bash -c "HOME=$tmp_home source '$installed' && cfctx version"

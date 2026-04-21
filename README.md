@@ -57,17 +57,66 @@ Layered on top of that primitive, cfctx adds:
 
 ## Install
 
+### macOS
+
 ```bash
+# Tanzu CLIs (adjust tap names if your org uses a mirror):
+brew install jq
+brew install cloudfoundry/tap/cf-cli@8
+brew install pivotal/tap/om
+brew install cloudfoundry/tap/bosh-cli
+brew install cloudfoundry/tap/credhub-cli
+
+# cfctx itself:
 git clone https://github.com/nkuhn-vmw/cfctx.git ~/.local/share/cfctx
-bash ~/.local/share/cfctx/install.sh    # idempotently wires ~/.zshrc or ~/.bashrc
+bash ~/.local/share/cfctx/install.sh    # idempotently wires ~/.zshrc or ~/.bash_profile
 exec $SHELL
 ```
 
-…or manually:
+### Linux (Ubuntu / Debian)
+
+```bash
+# Core deps from apt:
+sudo apt-get update
+sudo apt-get install -y jq curl wget
+
+# cf CLI (Cloud Foundry):
+wget -q -O - https://packages.cloudfoundry.org/debian/cli.cloudfoundry.org.key | sudo apt-key add -
+echo "deb https://packages.cloudfoundry.org/debian stable main" | sudo tee /etc/apt/sources.list.d/cloudfoundry-cli.list
+sudo apt-get update && sudo apt-get install -y cf8-cli
+
+# om CLI (Ops Manager) — binary release from pivotal-cf/om:
+OM_VERSION=7.14.2      # https://github.com/pivotal-cf/om/releases
+sudo curl -fsSL -o /usr/local/bin/om "https://github.com/pivotal-cf/om/releases/download/${OM_VERSION}/om-linux-amd64-${OM_VERSION}"
+sudo chmod +x /usr/local/bin/om
+
+# bosh CLI:
+BOSH_VERSION=7.7.1     # https://github.com/cloudfoundry/bosh-cli/releases
+sudo curl -fsSL -o /usr/local/bin/bosh "https://s3.amazonaws.com/bosh-cli-artifacts/bosh-cli-${BOSH_VERSION}-linux-amd64"
+sudo chmod +x /usr/local/bin/bosh
+
+# credhub CLI (optional but recommended):
+CREDHUB_VERSION=2.9.45 # https://github.com/cloudfoundry/credhub-cli/releases
+curl -fsSL -o /tmp/credhub.tgz "https://github.com/cloudfoundry/credhub-cli/releases/download/${CREDHUB_VERSION}/credhub-linux-amd64-${CREDHUB_VERSION}.tgz"
+sudo tar -xzf /tmp/credhub.tgz -C /usr/local/bin/ credhub && rm /tmp/credhub.tgz
+
+# cfctx itself (same as macOS from here):
+git clone https://github.com/nkuhn-vmw/cfctx.git ~/.local/share/cfctx
+bash ~/.local/share/cfctx/install.sh    # wires ~/.bashrc (or ~/.zshrc if you use zsh)
+exec $SHELL
+```
+
+**Linux notes:**
+- Default shell is bash, so `install.sh` appends to `~/.bashrc`. For zsh users (`chsh -s $(which zsh)`), it wires `~/.zshrc` instead.
+- `bash install.sh` is idempotent — safe to re-run. The source line is bracketed with `# >>> cfctx >>>` / `# <<< cfctx <<<` markers for clean uninstall.
+- `jq` is required for automatic `CF_API` / CF-admin-credential detection. BOSH-env enrichment works without jq.
+- For air-gapped installs, download the tarballs from a workstation and `scp` them in — cfctx itself has no runtime deps beyond the standard Tanzu CLIs.
+
+### Manual install (any platform)
 
 ```bash
 git clone https://github.com/nkuhn-vmw/cfctx.git ~/.local/share/cfctx
-echo 'source ~/.local/share/cfctx/cfctx.sh' >> ~/.zshrc
+echo 'source ~/.local/share/cfctx/cfctx.sh' >> ~/.zshrc    # or ~/.bashrc
 exec $SHELL
 ```
 
