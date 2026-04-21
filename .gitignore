@@ -1,0 +1,38 @@
+# cfctx — never commit secrets or local context state
+#
+# The real storage for contexts is $CFCTX_ROOT (default ~/.cf-homes/),
+# which lives OUTSIDE this repo. These rules are belt-and-suspenders in
+# case a user points CFCTX_ROOT into the repo, drops a test env file in,
+# or accidentally copies a context for debugging.
+
+# ---- Secrets and per-user env files ----
+*.env
+!*.env.example
+context.env
+.cf-homes/
+.cfctx/
+**/.cf/
+**/*.secret
+**/*.pem
+**/*.key
+**/*_rsa
+**/*_ed25519
+**/*.pfx
+**/id_rsa*
+**/id_ed25519*
+
+# ---- Tools and editors ----
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- Shell/test artifacts ----
+*.log
+tmp/
+tests/bats/
+tests/.bats-tmp/
+/files.zip
+/cfctx-spec.md
