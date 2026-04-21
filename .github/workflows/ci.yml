@@ -93,6 +93,23 @@ jobs:
             cfctx newfound --create --no-enrich --no-login >/dev/null
             cfctx | grep -q newfound
 
+            echo "=== did-you-mean guard does not crash zsh on empty .yaml glob ==="
+            # Regression: zsh NO_MATCH errored out here pre-find rewrite.
+            guard_root="$(mktemp -d)"
+            mkdir -p "$guard_root/tdc"
+            touch "$guard_root/tdc/context.env"
+            chmod 600 "$guard_root/tdc/context.env"
+            # om_dir already has only .yml files; guard was erroring on *.yaml.
+            output="$(echo n | _cfctx_confirm_new_blank "$guard_root" whatsthis 2>&1)" || true
+            echo "$output" | grep -qi "doesnt\|does\|blank context" || { echo FAIL; exit 1; }
+
+            echo "=== cfctx <name> with auto-discoverable yaml does not prompt ==="
+            # Regression: guard used to fire before init-envs auto-discovery ran,
+            # so a valid-name-with-yaml would prompt anyway. Fix: peek discovery.
+            # (stdin is non-TTY in CI so the guard would skip anyway; this just
+            # ensures the peek call itself works.)
+            cfctx zsh-foundation --no-enrich --no-login >/dev/null 2>&1
+
             echo "=== zsh smoke passed ==="
           '
 

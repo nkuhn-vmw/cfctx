@@ -796,11 +796,18 @@ HELP
     fi
 
     if (( need_init )); then
-        # Did-you-mean guard: if we're about to stamp a BLANK template (no om
-        # yaml discovered, no --from-om, no override flags) AND the ctx dir
-        # didn't exist before, and we're interactive, confirm with suggestions.
-        # Skips: already exists, --force re-seed, --create, or non-interactive.
-        if [[ ! -d "$ctx_dir" && -z "$om_file" && $create -eq 0 && -t 0 ]]; then
+        # Peek auto-discovery BEFORE the did-you-mean guard — otherwise
+        # `cfctx dev211` with a matching om-cli-dev211.yml in CFCTX_OM_ENV_DIR
+        # would wrongly trigger the "no om yaml" prompt, since init-env's
+        # own discovery hasn't run yet at this point.
+        local _peek_om=""
+        if [[ -z "$om_file" && -n "${CFCTX_OM_ENV_DIR:-}" ]]; then
+            _peek_om=$(_cfctx_discover_om_file "$CFCTX_OM_ENV_DIR" "$name" 2>/dev/null || true)
+        fi
+
+        # Did-you-mean guard: only for truly blank creation paths —
+        # fresh ctx, no --from-om, no auto-discoverable yaml, interactive, not --create.
+        if [[ ! -d "$ctx_dir" && -z "$om_file" && -z "$_peek_om" && $create -eq 0 && -t 0 ]]; then
             if ! _cfctx_confirm_new_blank "$root" "$name"; then
                 return 1
             fi
@@ -1204,25 +1211,29 @@ EOF
 # Interactive "did you mean?" guard — triggered when user is about to create
 # a brand-new context with no om yaml discovered. Lists existing contexts and
 # discoverable yamls so they can recognise a typo before it stamps junk.
+#
+# Uses `find` instead of shell globs because zsh's default NO_MATCH option
+# makes `for d in dir/*.yaml` error out when there are no matches — bash
+# silently leaves the glob literal, zsh aborts the function.
 _cfctx_confirm_new_blank() {
     local root="$1" name="$2"
     local -a existing=() yamls=()
-    local d
+    local d base
+
     if [[ -d "$root" ]]; then
-        for d in "$root"/*/; do
-            [[ -d "$d" ]] || continue
-            existing+=("$(basename "$d")")
-        done
+        while IFS= read -r d; do
+            [[ -n "$d" ]] && existing+=("$(basename "$d")")
+        done < <(find "$root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
     fi
     if [[ -n "${CFCTX_OM_ENV_DIR:-}" && -d "$CFCTX_OM_ENV_DIR" ]]; then
-        for d in "$CFCTX_OM_ENV_DIR"/*.yml "$CFCTX_OM_ENV_DIR"/*.yaml; do
-            [[ -f "$d" ]] || continue
-            local base
-            base=$(basename "$d" .yml)
+        while IFS= read -r d; do
+            [[ -n "$d" ]] || continue
+            base=$(basename "$d")
+            base=${base%.yml}
             base=${base%.yaml}
             base=${base#om-cli-}
             yamls+=("$base")
-        done
+        done < <(find "$CFCTX_OM_ENV_DIR" -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null)
     fi
 
     echo
