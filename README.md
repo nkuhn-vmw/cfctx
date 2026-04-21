@@ -263,8 +263,8 @@ cfctx/
 
 ## Status and roadmap
 
-v0.2. Production-ready for single-user workstations. Roadmap tracked in
-issues; pending items include:
+v0.2. Production-ready for single-user workstations. Full design doc and
+roadmap in [`docs/roadmap.md`](docs/roadmap.md). Pending items include:
 
 - fzf-based picker (`cfctx pick`)
 - `cfctx lock <name>` read-only safety rail (prompts on destructive ops)
