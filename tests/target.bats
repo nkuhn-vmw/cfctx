@@ -39,14 +39,14 @@ EOF
 @test "target is idempotent — second run just switches, doesn't re-stamp" {
     cfctx target foo
     local mtime1
-    mtime1=$(stat -f '%m' "$CFCTX_ROOT/foo/context.env" 2>/dev/null \
-              || stat -c '%Y' "$CFCTX_ROOT/foo/context.env")
+    mtime1=$(stat -c '%Y' "$CFCTX_ROOT/foo/context.env" 2>/dev/null \
+              || stat -f '%m' "$CFCTX_ROOT/foo/context.env" 2>/dev/null)
     sleep 1
     unset CF_HOME
     cfctx target foo
     local mtime2
-    mtime2=$(stat -f '%m' "$CFCTX_ROOT/foo/context.env" 2>/dev/null \
-              || stat -c '%Y' "$CFCTX_ROOT/foo/context.env")
+    mtime2=$(stat -c '%Y' "$CFCTX_ROOT/foo/context.env" 2>/dev/null \
+              || stat -f '%m' "$CFCTX_ROOT/foo/context.env" 2>/dev/null)
     [ "$mtime1" = "$mtime2" ]
     [ "$CF_HOME" = "$CFCTX_ROOT/foo" ]
 }

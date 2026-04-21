@@ -68,13 +68,13 @@ EOF
 
     # Subsequent bare call is idempotent (doesn't re-stamp).
     local mtime1
-    mtime1=$(stat -f '%m' "$CFCTX_ROOT/newfound/context.env" 2>/dev/null \
-              || stat -c '%Y' "$CFCTX_ROOT/newfound/context.env")
+    mtime1=$(stat -c '%Y' "$CFCTX_ROOT/newfound/context.env" 2>/dev/null \
+              || stat -f '%m' "$CFCTX_ROOT/newfound/context.env" 2>/dev/null)
     sleep 1
     cfctx newfound
     local mtime2
-    mtime2=$(stat -f '%m' "$CFCTX_ROOT/newfound/context.env" 2>/dev/null \
-              || stat -c '%Y' "$CFCTX_ROOT/newfound/context.env")
+    mtime2=$(stat -c '%Y' "$CFCTX_ROOT/newfound/context.env" 2>/dev/null \
+              || stat -f '%m' "$CFCTX_ROOT/newfound/context.env" 2>/dev/null)
     [ "$mtime1" = "$mtime2" ]
 }
 
