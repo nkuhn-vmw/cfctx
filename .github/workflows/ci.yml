@@ -14,7 +14,10 @@ jobs:
         run: |
           sudo apt-get update -y && sudo apt-get install -y shellcheck
           # cfctx.sh is meant to be sourced, so allow sourcing warnings
-          shellcheck -s bash -e SC1090,SC1091 cfctx.sh install.sh completions/cfctx.bash
+          # SC1090/SC1091: sourcing warnings (expected — we source context.env dynamically).
+          # SC2317: "unreachable" warnings on `: __cfctx_term_wrap__` markers that
+          # are intentionally a no-op, used as a sentinel for wrap detection.
+          shellcheck -s bash -e SC1090,SC1091,SC2317 cfctx.sh install.sh completions/cfctx.bash
 
   bats:
     strategy:
