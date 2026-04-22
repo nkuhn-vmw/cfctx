@@ -104,6 +104,7 @@ cfctx() {
             unset BOSH_ENVIRONMENT BOSH_CLIENT BOSH_CLIENT_SECRET BOSH_CA_CERT BOSH_DEPLOYMENT \
                   BOSH_GW_HOST BOSH_GW_USER BOSH_GW_PRIVATE_KEY
             unset CREDHUB_SERVER CREDHUB_CLIENT CREDHUB_SECRET CREDHUB_CA_CERT
+            _cfctx_uninstall_term_wraps
             echo "CF_HOME and related Tanzu env unset in this shell"
             ;;
 
@@ -1130,6 +1131,76 @@ _cfctx_auto_login() {
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# TERM wraps for bosh/cf — overlay shell functions that prepend a "safe"
+# TERM to every invocation, when the local terminal (Ghostty/Kitty/Alacritty)
+# uses a terminfo name that remote hosts typically don't have.
+#
+# Why this exists:
+#   Error opening terminal: xterm-ghostty.    (seen on `bosh ssh`, `cf ssh`)
+#
+# Design:
+#   - Trigger only for a conservative list of known-problematic TERMs.
+#   - Never clobber a user-defined alias/function — skip if one exists.
+#   - Mark our wrappers with a sentinel comment so uninstall only removes
+#     our own functions and leaves user customization alone.
+#   - Silent: no output on install/uninstall (doctor surfaces status).
+#
+# Opt-outs:
+#   CFCTX_NO_TERM_WRAPS=1    — disable entirely
+#   CFCTX_SAFE_TERM=<value>  — override the replacement TERM (default: xterm-256color)
+# ---------------------------------------------------------------------------
+
+_cfctx_term_is_exotic() {
+    # shellcheck disable=SC2194  # intentional: constant list as the case word, TERM-substring as pattern
+    case " xterm-ghostty xterm-kitty alacritty-direct alacritty " in
+        *" ${TERM:-} "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_cfctx_can_wrap() {
+    local cmd="$1"
+    # No existing alias or function — safe to install.
+    if ! alias "$cmd" >/dev/null 2>&1 && ! declare -f "$cmd" >/dev/null 2>&1; then
+        return 0
+    fi
+    # Already our own wrap (idempotent re-install).
+    declare -f "$cmd" 2>/dev/null | grep -q __cfctx_term_wrap__ && return 0
+    # User-defined — leave it alone.
+    return 1
+}
+
+_cfctx_install_term_wraps() {
+    [[ -z "${CFCTX_NO_TERM_WRAPS:-}" ]] || return 0
+    _cfctx_term_is_exotic || return 0
+
+    # shellcheck disable=SC2329  # bosh() / cf() are user-facing wraps — invoked interactively
+    if command -v bosh >/dev/null 2>&1 && _cfctx_can_wrap bosh; then
+        bosh() {
+            : __cfctx_term_wrap__
+            TERM="${CFCTX_SAFE_TERM:-xterm-256color}" command bosh "$@"
+        }
+    fi
+    # shellcheck disable=SC2329
+    if command -v cf >/dev/null 2>&1 && _cfctx_can_wrap cf; then
+        cf() {
+            : __cfctx_term_wrap__
+            TERM="${CFCTX_SAFE_TERM:-xterm-256color}" command cf "$@"
+        }
+    fi
+}
+
+_cfctx_uninstall_term_wraps() {
+    local cmd
+    for cmd in bosh cf; do
+        # Only remove if it's our wrap — leave user-defined functions alone.
+        if declare -f "$cmd" 2>/dev/null | grep -q __cfctx_term_wrap__; then
+            unset -f "$cmd" 2>/dev/null || true
+        fi
+    done
+}
+
 _cfctx_cmd_switch() {
     local root="$1" name="$2"
     _cfctx_valid_name "$name" || return 1
@@ -1154,6 +1225,11 @@ _cfctx_cmd_switch() {
 
     # Attempt CF auto-login (no-op if CF_API unset, cf not installed, or tokens cached).
     _cfctx_auto_login "$ctx_dir"
+
+    # Install TERM wraps for bosh/cf if the local shell uses an "exotic" TERM
+    # that remote hosts probably don't have in their terminfo DB. No-op for
+    # xterm-256color and friends.
+    _cfctx_install_term_wraps
 }
 
 _cfctx_write_template() {
@@ -1313,6 +1389,26 @@ _cfctx_cmd_doctor() {
             esac
         fi
     done
+
+    # --- Terminal / TERM wrap status ---
+    echo
+    echo "-- Terminal --"
+    echo "[${_tick}] TERM=${TERM:-(unset)}"
+    if [[ -n "${CFCTX_NO_TERM_WRAPS:-}" ]]; then
+        echo "[${_warn}] CFCTX_NO_TERM_WRAPS is set — bosh/cf wraps disabled"
+    elif _cfctx_term_is_exotic; then
+        local safe_term="${CFCTX_SAFE_TERM:-xterm-256color}"
+        local bosh_wrapped=0 cf_wrapped=0
+        declare -f bosh 2>/dev/null | grep -q __cfctx_term_wrap__ && bosh_wrapped=1
+        declare -f cf   2>/dev/null | grep -q __cfctx_term_wrap__ && cf_wrapped=1
+        if (( bosh_wrapped || cf_wrapped )); then
+            echo "[${_tick}] TERM wraps active ($TERM → $safe_term for bosh/cf)"
+        else
+            echo "[${_warn}] TERM=$TERM is exotic but wraps aren't installed yet — run 'cfctx <name>' to activate"
+        fi
+    else
+        echo "[${c_dim}-${c_off}] TERM wraps not needed (TERM is broadly compatible)"
+    fi
 
     # --- Contexts ---
     echo
@@ -1547,6 +1643,14 @@ cfctx $CFCTX_VERSION — per-shell CF CLI / Tanzu context switcher
 
 Storage:  \$CFCTX_ROOT  (default: \$HOME/.cf-homes; override by exporting CFCTX_ROOT)
 Env file: \$CFCTX_ROOT/<name>/context.env  (mode 0600, NEVER commit)
+
+Env vars:
+  CFCTX_OM_ENV_DIR        Auto-discover om env files from this dir
+  CFCTX_OM_ENV_PATTERNS   Filename patterns ('NAME' placeholder; space-separated)
+  CFCTX_NO_AUTO_LOGIN=1   Skip CF auto-login on switch
+  CFCTX_NO_OM_ENRICH=1    Skip Ops Manager enrichment on init-env
+  CFCTX_NO_TERM_WRAPS=1   Skip bosh/cf TERM wraps even on exotic terminals
+  CFCTX_SAFE_TERM=<TERM>  Replacement TERM used by the wraps (default: xterm-256color)
 USAGE
 }
 

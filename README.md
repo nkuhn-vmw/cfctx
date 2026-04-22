@@ -224,6 +224,43 @@ Flags on `cfctx <name>` / `cfctx target <name>`:
 
 ---
 
+## Ghostty / Kitty / Alacritty (`xterm-ghostty` on remote hosts)
+
+If your local terminal sets `TERM=xterm-ghostty` (or `xterm-kitty`,
+`alacritty-direct`), remote hosts that don't have that terminfo entry
+installed will fail curses-based tools with:
+
+```
+Error opening terminal: xterm-ghostty.
+```
+
+On switch, cfctx detects an "exotic" TERM and silently installs two
+shell-function overrides:
+
+```bash
+bosh ssh director-0     # really runs: TERM=xterm-256color command bosh ssh director-0
+cf ssh my-app           # really runs: TERM=xterm-256color command cf ssh my-app
+```
+
+No typing changes. Local-shell `$TERM` is untouched, so Ghostty's
+native features (image protocol, cursor shapes) keep working for
+local commands.
+
+Safety:
+
+- Only triggers for specific exotic TERMs (falls through for `xterm-256color`, `tmux-256color`, `screen-256color`, etc.).
+- Skips installation if you already have your own `bosh` / `cf` alias or function.
+- Marker comment (`__cfctx_term_wrap__`) in the generated functions ensures uninstall only removes our own wraps, not user-defined ones.
+
+Knobs:
+
+```bash
+export CFCTX_NO_TERM_WRAPS=1         # disable entirely
+export CFCTX_SAFE_TERM=xterm         # use a different fallback TERM
+```
+
+Uninstall is automatic on `cfctx clear`. Status is visible in `cfctx doctor`.
+
 ## Security posture
 
 - **Per-context env files live at `$CFCTX_ROOT/<name>/context.env` (default

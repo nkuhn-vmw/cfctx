@@ -110,6 +110,21 @@ jobs:
             # ensures the peek call itself works.)
             cfctx zsh-foundation --no-enrich --no-login >/dev/null 2>&1
 
+            echo "=== term wraps install on ghostty-shaped TERM under zsh ==="
+            # Fake bosh in PATH so install_term_wraps has something to wrap.
+            wrap_bin="$(mktemp -d)"
+            echo "#!/bin/sh" > "$wrap_bin/bosh"
+            echo "echo TERM=\$TERM" >> "$wrap_bin/bosh"
+            chmod +x "$wrap_bin/bosh"
+            PATH="$wrap_bin:$PATH" TERM=xterm-ghostty _cfctx_install_term_wraps
+            declare -f bosh | grep -q __cfctx_term_wrap__ || { echo FAIL; exit 1; }
+            # Call the wrap; should invoke real bosh with safe TERM.
+            output="$(PATH="$wrap_bin:$PATH" CFCTX_SAFE_TERM=xterm-256color bosh)"
+            [[ "$output" == "TERM=xterm-256color" ]] || { echo "FAIL: $output"; exit 1; }
+            # Uninstall cleanly.
+            _cfctx_uninstall_term_wraps
+            [[ "$(declare -f bosh 2>/dev/null)" == "" ]] || { echo "uninstall FAIL"; exit 1; }
+
             echo "=== zsh smoke passed ==="
           '
 
