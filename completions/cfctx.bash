@@ -11,7 +11,7 @@ _cfctx_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local subs="status ls rm cp mv edit init-env enrich target doctor prompt color env clear version help"
+    local subs="status ls rm cp mv edit init-env enrich target pick doctor prompt color env clear version help"
     local root="${CFCTX_ROOT:-$HOME/.cf-homes}"
 
     local contexts=""

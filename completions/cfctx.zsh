@@ -19,6 +19,7 @@ _cfctx() {
         'init-env:stamp a context.env template'
         'enrich:re-query Ops Manager to refresh BOSH_*/CF_API'
         'target:init-env (if missing) + switch in one step'
+        'pick:fzf-based interactive foundation picker'
         'doctor:diagnose cfctx / context state'
         'prompt:emit a shell prompt snippet (zsh|bash|starship)'
         'color:set/clear per-context color for the prompt'

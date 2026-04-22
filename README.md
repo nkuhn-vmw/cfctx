@@ -224,6 +224,39 @@ Flags on `cfctx <name>` / `cfctx target <name>`:
 
 ---
 
+## Interactive picker (fzf)
+
+If you have `fzf` installed, pick a foundation interactively:
+
+```bash
+cfctx pick
+```
+
+Opens an fzf prompt over all configured contexts with a preview pane showing
+`CF_API`, `CF_ORG`, `CF_SPACE`, `OM_TARGET`, `BOSH_ENVIRONMENT` (secrets
+redacted). Type to filter, Enter to switch — runs the full `cfctx <name>`
+flow (auto-login, wraps, etc.). `Esc` cancels without switching.
+
+If fzf isn't installed, `cfctx pick` prints a clear install hint and exits
+non-zero; everything else in cfctx keeps working without fzf.
+
+## Token-expiry awareness
+
+Every `cfctx <name>` silently decodes the cached CF token's JWT `exp` claim.
+If it's within 60s of expiring (or already expired), auto-login re-authenticates
+transparently — no more "logged out mid-session" surprises after a tab sits
+idle overnight. Requires `jq`; without it, tokens are trusted based on
+presence only (previous behavior).
+
+`cfctx doctor` surfaces expiry per-context:
+
+```
+  tdc
+    [✓] CF token cached (expires in 23h)
+  cdc
+    [!] CF token EXPIRED 2h ago — next switch will re-auth
+```
+
 ## Ghostty / Kitty / Alacritty (`xterm-ghostty` on remote hosts)
 
 If your local terminal sets `TERM=xterm-ghostty` (or `xterm-kitty`,

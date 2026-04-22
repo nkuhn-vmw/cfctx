@@ -81,6 +81,11 @@ cfctx() {
             _cfctx_cmd_target "$CFCTX_ROOT" "$@"
             ;;
 
+        pick)
+            shift
+            _cfctx_cmd_pick "$CFCTX_ROOT" "$@"
+            ;;
+
         doctor)
             shift
             _cfctx_cmd_doctor "$CFCTX_ROOT" "$@"
@@ -1043,6 +1048,88 @@ _cfctx_strip_section() {
     chmod 600 "$env_file"
 }
 
+# Decode the JWT `exp` claim from the cached CF AccessToken in $cfg.
+# Prints the Unix-epoch expiry on stdout; empty output + nonzero exit if
+# the file/token is missing, the token isn't a JWT, jq is absent, or the
+# base64 decode failed. All failure modes are non-fatal — callers that
+# can't determine expiry should *trust* the cache (don't force re-auth).
+# Extract a top-level JSON string field from a single-line JSON file.
+# Used for pulling AccessToken / Target out of $CF_HOME/.cf/config.json.
+# Prefers jq, falls back to sed. Handles one-line JSON only (what cf writes).
+_cfctx_json_str() {
+    local cfg="$1" key="$2"
+    [[ -f "$cfg" ]] || return 1
+    if command -v jq >/dev/null 2>&1; then
+        jq -r ".$key // empty" "$cfg" 2>/dev/null
+    else
+        sed -n 's/.*"'"$key"'":"\([^"]*\)".*/\1/p' "$cfg" 2>/dev/null | head -1
+    fi
+}
+
+_cfctx_token_exp_epoch() {
+    local cfg="$1"
+    [[ -f "$cfg" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    local raw payload decoded
+    raw=$(_cfctx_json_str "$cfg" AccessToken)
+    # AccessToken is formatted "bearer <jwt>" (case varies).
+    raw="${raw#bearer }"
+    raw="${raw#Bearer }"
+    [[ -n "$raw" ]] || return 1
+
+    # JWT: header.payload.signature — take the middle segment.
+    payload="${raw#*.}"
+    payload="${payload%.*}"
+    [[ -n "$payload" && "$payload" != "$raw" ]] || return 1
+
+    # URL-safe base64 → standard base64; pad to a 4-byte boundary.
+    payload=$(printf '%s' "$payload" | tr -- '-_' '+/')
+    while (( ${#payload} % 4 )); do payload="${payload}="; done
+
+    # GNU base64 uses -d; BSD uses -D. Try both.
+    decoded=$(printf '%s' "$payload" | base64 -d 2>/dev/null) || \
+    decoded=$(printf '%s' "$payload" | base64 -D 2>/dev/null) || return 1
+
+    printf '%s' "$decoded" | jq -r '.exp // empty' 2>/dev/null
+}
+
+# Returns 0 if the cached CF token is expired (or within $grace seconds of
+# expiring), 1 if valid, 2 if we can't tell. Callers should treat 2 as
+# "trust the cache" — don't re-auth when we lack info.
+_cfctx_token_expired() {
+    local cfg="$1" grace="${2:-60}"
+    local exp now
+    exp=$(_cfctx_token_exp_epoch "$cfg") || return 2
+    [[ -n "$exp" ]] || return 2
+    now=$(date +%s)
+    (( now + grace >= exp )) && return 0
+    return 1
+}
+
+# Human-readable "expires in Xh" / "expired Ys ago" for doctor output.
+_cfctx_token_humanize() {
+    local cfg="$1"
+    local exp now secs
+    exp=$(_cfctx_token_exp_epoch "$cfg") || return 1
+    [[ -n "$exp" ]] || return 1
+    now=$(date +%s)
+    secs=$((exp - now))
+    if (( secs < 0 )); then
+        secs=$(( -secs ))
+        if   (( secs < 60 ));    then printf 'EXPIRED %ss ago' "$secs"
+        elif (( secs < 3600 ));  then printf 'EXPIRED %sm ago' $((secs/60))
+        else                          printf 'EXPIRED %sh ago' $((secs/3600))
+        fi
+    else
+        if   (( secs < 60 ));    then printf 'expires in %ss' "$secs"
+        elif (( secs < 3600 ));  then printf 'expires in %sm' $((secs/60))
+        elif (( secs < 86400 )); then printf 'expires in %sh' $((secs/3600))
+        else                          printf 'expires in %sd' $((secs/86400))
+        fi
+    fi
+}
+
 # Auto-login to CF using CF_API + (CF_USERNAME or OM_USERNAME) +
 # (CF_PASSWORD or OM_PASSWORD). Called from _cfctx_cmd_switch after
 # context.env has been sourced. Silent if cf is not installed, CF_API
@@ -1063,16 +1150,22 @@ _cfctx_auto_login() {
         return 0
     fi
 
-    # Decide if we need to re-auth. Skip if token is cached for this API.
+    # Decide if we need to re-auth. Skip if token is cached AND not expired.
     local cfg="$ctx_dir/.cf/config.json"
     local needs_login=1
     if [[ -f "$cfg" ]]; then
         local current_api access_token
-        current_api=$(awk -F'"' '/"Target":/ {print $4; exit}' "$cfg" 2>/dev/null)
-        access_token=$(awk -F'"' '/"AccessToken":/ {print $4; exit}' "$cfg" 2>/dev/null)
+        current_api=$(_cfctx_json_str "$cfg" Target)
+        access_token=$(_cfctx_json_str "$cfg" AccessToken)
         if [[ "$current_api" == "$CF_API" && -n "$access_token" ]]; then
-            needs_login=0
-            echo "  cf: using cached token for $CF_API"
+            # Honour JWT `exp` claim; fall through to re-auth if expired.
+            # If we can't decode (no jq / not a JWT), trust the cache.
+            if _cfctx_token_expired "$cfg"; then
+                echo "  cf: cached token expired — re-authenticating"
+            else
+                needs_login=0
+                echo "  cf: using cached token for $CF_API"
+            fi
         fi
     fi
 
@@ -1456,12 +1549,22 @@ _cfctx_cmd_doctor() {
             else
                 echo "    [${_warn}] BOSH_* missing — run 'cfctx enrich $name'"
             fi
-            # Cached token
+            # Cached token + expiry (JWT exp claim, if decodable)
             if [[ -f "${dir}.cf/config.json" ]]; then
-                local tok
-                tok=$(awk -F'"' '/"AccessToken":/ {print $4; exit}' "${dir}.cf/config.json" 2>/dev/null)
+                local tok cfg="${dir}.cf/config.json" human
+                tok=$(_cfctx_json_str "$cfg" AccessToken)
                 if [[ -n "$tok" ]]; then
-                    echo "    [${_tick}] CF token cached"
+                    if _cfctx_token_expired "$cfg"; then
+                        human=$(_cfctx_token_humanize "$cfg" 2>/dev/null)
+                        echo "    [${_warn}] CF token ${human:-EXPIRED} — next switch will re-auth"
+                    else
+                        human=$(_cfctx_token_humanize "$cfg" 2>/dev/null)
+                        if [[ -n "$human" ]]; then
+                            echo "    [${_tick}] CF token cached ($human)"
+                        else
+                            echo "    [${_tick}] CF token cached (expiry unknown — install jq for details)"
+                        fi
+                    fi
                 else
                     echo "    [${_warn}] .cf/config.json present but no AccessToken"
                 fi
@@ -1609,6 +1712,66 @@ _cfctx_cmd_color() {
     esac
 }
 
+# `cfctx pick` — fzf-based interactive context picker. Opens fzf with the
+# list of foundations; on Enter, runs `cfctx <name>` (full target path, so
+# env gets sourced + cf auto-logs-in). Graceful fallback if fzf is missing.
+_cfctx_cmd_pick() {
+    local root="$1"
+    if ! command -v fzf >/dev/null 2>&1; then
+        cat >&2 <<EOF
+cfctx pick: fzf is not installed.
+  macOS:  brew install fzf
+  Linux:  sudo apt install fzf  (or https://github.com/junegunn/fzf#installation)
+Without fzf, use bare cfctx (to list) or cfctx <name> (to switch).
+EOF
+        return 1
+    fi
+    if [[ ! -d "$root" ]] || [[ -z "$(ls -A "$root" 2>/dev/null)" ]]; then
+        echo "No contexts yet. Create one with: cfctx <name> --cf-api <url>" >&2
+        return 1
+    fi
+
+    # Build lines: marker<TAB>name<TAB>target_url
+    local dir name is_current target_url line input=""
+    for dir in "$root"/*/; do
+        [[ -d "$dir" ]] || continue
+        name=$(basename "$dir")
+        is_current=" "
+        [[ "${CF_HOME:-}" == "${dir%/}" ]] && is_current="●"
+        target_url=""
+        if [[ -f "${dir}context.env" ]]; then
+            target_url=$(_cfctx_read_env_var "${dir}context.env" CF_API)
+            [[ -z "$target_url" ]] && target_url=$(_cfctx_read_env_var "${dir}context.env" OM_TARGET)
+        fi
+        printf -v line '%s\t%s\t%s' "$is_current" "$name" "${target_url:-(no env)}"
+        input+="$line"$'\n'
+    done
+
+    # Preview: show non-secret highlights from the selected context's env file.
+    # fzf runs preview in sh -c; $f is expanded by THAT subshell, not this one —
+    # single quotes are intentional.
+    local preview_cmd
+    # shellcheck disable=SC2016  # $f expanded by fzf preview sh, not here
+    preview_cmd='f='"'$root/'"'{2}/context.env; if [ -f "$f" ]; then
+        grep -E "^(export )?(CF_API|CF_ORG|CF_SPACE|OM_TARGET|BOSH_ENVIRONMENT|BOSH_CLIENT)=" "$f" | sed "s/^export //"
+        printf "\n(secrets redacted; run: cfctx env '"'"'{2}'"'"' for full masked view)\n"
+    else
+        echo "(no context.env for '"'"'{2}'"'"')"
+    fi'
+
+    local chosen name_picked
+    chosen=$(printf '%s' "$input" | fzf \
+        --header='cfctx pick — Enter=switch, Esc=cancel' \
+        --delimiter=$'\t' \
+        --with-nth=1,2,3 \
+        --preview="$preview_cmd" \
+        --preview-window='right:50%:wrap') || return 0
+
+    name_picked=$(printf '%s' "$chosen" | awk -F'\t' '{print $2}')
+    [[ -n "$name_picked" ]] || return 0
+    _cfctx_cmd_target "$root" "$name_picked"
+}
+
 _cfctx_cmd_help() {
     cat <<USAGE
 cfctx $CFCTX_VERSION — per-shell CF CLI / Tanzu context switcher
@@ -1620,6 +1783,7 @@ cfctx $CFCTX_VERSION — per-shell CF CLI / Tanzu context switcher
                         CF_API is set (or --cf-api <url> passed). After
                         first login, tokens are cached — re-runs are instant.
   cfctx target <name>   Explicit alias for the bare form above.
+  cfctx pick            Open fzf to fuzzy-pick a foundation interactively.
   cfctx status          Show current context details (CF_HOME + cf target).
   cfctx ls              List all contexts (* marks current, [env] = has env file)
   cfctx rm <name>       Delete a context (prompts for confirmation)
