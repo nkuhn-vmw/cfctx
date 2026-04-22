@@ -196,6 +196,7 @@ cfctx doctor --online     # also probe each foundation's OM reachability
 | `cfctx` | List all foundations, current highlighted, with `[env]` and target URL. |
 | `cfctx <name> [flags]` | Target a foundation: stamp `context.env`, enrich from OM, switch, auto-login. |
 | `cfctx target <name>` | Explicit alias for the bare form. |
+| `cfctx pick` | fzf-based interactive picker (requires `fzf`). |
 | `cfctx enrich [name]` | Re-query Ops Manager to refresh `BOSH_*` / `CF_API` / CF creds. Idempotent. |
 | `cfctx edit [name]` | Open `context.env` in `$EDITOR` (stamps a template if absent). |
 | `cfctx env [name]` | Print `context.env` with secret-looking values masked. |
