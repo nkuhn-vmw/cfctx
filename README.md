@@ -341,14 +341,18 @@ brew install bats-core
 bats tests/
 ```
 
-The suite includes mock `cf` and `om` binaries, so it runs without network
-or a real foundation. 80 tests, covering switch/ls/clear, env-file
-handling, om yaml import, om-enrichment happy/unreachable paths, CF
-auto-login (fresh, cached, credential-failure, org/space targeting), typo
-guard, prompt snippet emission, color tagging, and `cfctx doctor`.
+The suite includes mock `cf`, `om`, and `fzf` binaries plus a JWT builder
+helper, so it runs without network or a real foundation. **112 tests**,
+covering: switch/ls/clear, env-file handling, om yaml import, om-enrichment
+happy/unreachable paths, CF auto-login (fresh, cached, expired-JWT,
+credential-failure, org/space targeting), typo guard, prompt snippet
+emission, color tagging, `cfctx doctor`, TERM wraps, JWT expiry parsing,
+and the fzf picker.
 
-CI runs on Ubuntu + macOS (both bash and zsh-sourced paths exercised
-via dual shell tests).
+CI runs six jobs on Ubuntu + macOS: `shellcheck`, `bats` × 2, `zsh-smoke`
+× 2 (sources cfctx.sh under real zsh and exercises helpers known to
+drift between shells), and `install-smoke` (runs install.sh in a
+disposable HOME and asserts idempotency + source-ability).
 
 ---
 
@@ -373,9 +377,13 @@ cfctx/
 │   ├── autologin.bats
 │   ├── enrich.bats
 │   ├── default-verb.bats
-│   └── tier1.bats                    # prompt / color / doctor / did-you-mean
+│   ├── tier1.bats                    # prompt / color / doctor / did-you-mean
+│   ├── term-wraps.bats                # bosh/cf TERM overrides on exotic terminals
+│   ├── token-expiry.bats              # JWT exp decoding + re-auth flow
+│   └── pick.bats                      # fzf picker (uses a mock fzf)
 ├── docs/
-│   └── tanzu-integration.md
+│   ├── tanzu-integration.md
+│   └── roadmap.md                     # design doc + pending items
 └── .github/
     └── workflows/
         └── ci.yml
@@ -385,14 +393,30 @@ cfctx/
 
 ## Status and roadmap
 
-v0.2. Production-ready for single-user workstations. Full design doc and
-roadmap in [`docs/roadmap.md`](docs/roadmap.md). Pending items include:
+v0.3.0. Production-ready for single-user workstations. Full design doc
+and roadmap in [`docs/roadmap.md`](docs/roadmap.md).
 
-- fzf-based picker (`cfctx pick`)
-- `cfctx lock <name>` read-only safety rail (prompts on destructive ops)
-- direnv bridge (`cfctx direnv`)
-- Homebrew tap / formula
-- Windows PowerShell port
+**Shipped since v0.2.0:**
+
+- Ghostty/Kitty/Alacritty TERM wraps for remote `bosh ssh` / `cf ssh`.
+- Token-expiry awareness via JWT `exp` claim (silent re-auth near expiry).
+- `cfctx pick` — fzf-based interactive picker with preview pane.
+- Cross-foundation correctness: OM_* env from a previous switch no
+  longer leaks into the next foundation's enrichment.
+- zsh compatibility hardening (NO_MATCH glob error, `${=var}` word split).
+- BSD-vs-GNU `stat` portability across every call site.
+- Linux install docs (apt + binary-download recipes).
+- CI hardening: zsh-smoke + install-smoke jobs alongside bats on
+  ubuntu-latest + macos-latest. 112 tests total.
+
+**Pending:**
+
+- `cfctx lock <name>` — read-only safety rail (prompts on destructive ops).
+- direnv bridge (`cfctx direnv`) — auto-switch foundations on `cd`.
+- Homebrew tap / formula.
+- Install.sh `--link` flag (symlink instead of copy — keeps installed
+  version in sync with a local clone).
+- Windows PowerShell port (deferred).
 
 ---
 

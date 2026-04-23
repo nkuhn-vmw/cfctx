@@ -13,7 +13,7 @@
 # It lives inside the context directory with mode 0600 and is never
 # meant to be committed to any repo.
 
-CFCTX_VERSION="0.2.0-dev"
+CFCTX_VERSION="0.3.0"
 
 cfctx() {
     local CFCTX_ROOT="${CFCTX_ROOT:-$HOME/.cf-homes}"
