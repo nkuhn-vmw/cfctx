@@ -420,8 +420,16 @@ cfctx/
 
 ## Status and roadmap
 
-v0.3.0. Production-ready for single-user workstations. Full design doc
+v0.3.1. Production-ready for single-user workstations. Full design doc
 and roadmap in [`docs/roadmap.md`](docs/roadmap.md).
+
+**Shipped in v0.3.1:**
+
+- **Terminal affordances** — OSC 2 window title (`cfctx:<name>`),
+  OSC 12 cursor color from `.cfctx-color`, OSC 8 clickable URLs in
+  the `cfctx` listing. TTY-gated; opt-out via
+  `CFCTX_NO_TERM_AFFORDANCES=1`. Works in Ghostty, iTerm2,
+  Terminal.app, tmux, WezTerm, gnome-terminal.
 
 **Shipped since v0.2.0:**
 
