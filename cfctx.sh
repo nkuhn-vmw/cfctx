@@ -110,6 +110,7 @@ cfctx() {
                   BOSH_GW_HOST BOSH_GW_USER BOSH_GW_PRIVATE_KEY
             unset CREDHUB_SERVER CREDHUB_CLIENT CREDHUB_SECRET CREDHUB_CA_CERT
             _cfctx_uninstall_term_wraps
+            _cfctx_reset_terminal_affordances
             echo "CF_HOME and related Tanzu env unset in this shell"
             ;;
 
@@ -230,7 +231,11 @@ _cfctx_cmd_ls() {
             printf '  %s' "$name"
         fi
         (( has_env )) && printf ' %s[env]%s' "$c_dim" "$c_off"
-        [[ -n "$target_url" ]] && printf '  %s%s%s' "$c_dim" "$target_url" "$c_off"
+        if [[ -n "$target_url" ]]; then
+            # Wrap the URL as an OSC 8 clickable hyperlink in TTYs that
+            # support it (Ghostty, iTerm2, WezTerm, tmux, recent gnome-terminal).
+            printf '  %s%s%s' "$c_dim" "$(_cfctx_osc8_link "$target_url")" "$c_off"
+        fi
         printf '\n'
     done
 }
@@ -1294,6 +1299,82 @@ _cfctx_uninstall_term_wraps() {
     done
 }
 
+# ---------------------------------------------------------------------------
+# Terminal affordances — OSC escape sequences for window title + cursor color.
+# These are universal VT100/xterm standards (supported in Ghostty, iTerm2,
+# Terminal.app, tmux, gnome-terminal, WezTerm, kitty, Konsole, etc.) — NOT
+# Ghostty-specific. Gated on stdout-is-a-TTY so piped output stays clean.
+#
+# OSC 2  sets window title: '\033]2;<text>\007'
+# OSC 8  emits a clickable hyperlink (used in the `cfctx` listing): '\033]8;;<url>\007<text>\033]8;;\007'
+# OSC 12 sets cursor color:  '\033]12;<color>\007'
+# OSC 112 resets cursor color to the terminal default.
+#
+# Opt-out:  CFCTX_NO_TERM_AFFORDANCES=1
+# Testing:  CFCTX_FORCE_TERM_AFFORDANCES=1 bypasses the TTY gate (tests only).
+# ---------------------------------------------------------------------------
+
+_cfctx_term_affordances_enabled() {
+    [[ -z "${CFCTX_NO_TERM_AFFORDANCES:-}" ]] || return 1
+    [[ -n "${CFCTX_FORCE_TERM_AFFORDANCES:-}" ]] && return 0
+    [[ -t 1 ]]
+}
+
+# Map a friendly color name to a hex code for OSC 12. Uses a Dracula-ish
+# palette so the cursor stays legible on common dark themes. Returns 1 for
+# unknown names (caller should skip emission).
+_cfctx_color_hex() {
+    case "$1" in
+        black)   printf '#282a36' ;;
+        red)     printf '#ff5555' ;;
+        green)   printf '#50fa7b' ;;
+        yellow)  printf '#f1fa8c' ;;
+        blue)    printf '#6272a4' ;;
+        magenta) printf '#ff79c6' ;;
+        cyan)    printf '#8be9fd' ;;
+        white)   printf '#f8f8f2' ;;
+        *)       return 1 ;;
+    esac
+}
+
+# Called from _cfctx_cmd_switch: sets the window title to "cfctx:<name>"
+# and the cursor color from the per-context .cfctx-color tag (if present).
+_cfctx_emit_terminal_affordances() {
+    local name="$1" ctx_dir="$2"
+    _cfctx_term_affordances_enabled || return 0
+
+    # OSC 2 — window / tab title. Visible in the Ghostty tab bar, iTerm2
+    # tabs, Terminal.app windows, tmux status bar.
+    printf '\033]2;cfctx:%s\007' "$name"
+
+    # OSC 12 — cursor color, if the context has a color tag.
+    if [[ -f "$ctx_dir/.cfctx-color" ]]; then
+        local color hex
+        color=$(cat "$ctx_dir/.cfctx-color" 2>/dev/null)
+        if hex=$(_cfctx_color_hex "$color"); then
+            printf '\033]12;%s\007' "$hex"
+        fi
+    fi
+}
+
+# Called from `cfctx clear`: blank the title and reset cursor color.
+_cfctx_reset_terminal_affordances() {
+    _cfctx_term_affordances_enabled || return 0
+    printf '\033]2;\007'        # empty title
+    printf '\033]112\007'       # reset cursor color to terminal default
+}
+
+# Format a URL as an OSC 8 clickable hyperlink. Used by _cfctx_cmd_ls.
+# Falls back to plain text when affordances are disabled / piped.
+_cfctx_osc8_link() {
+    local url="$1" text="${2:-$1}"
+    if _cfctx_term_affordances_enabled; then
+        printf '\033]8;;%s\007%s\033]8;;\007' "$url" "$text"
+    else
+        printf '%s' "$text"
+    fi
+}
+
 _cfctx_cmd_switch() {
     local root="$1" name="$2"
     _cfctx_valid_name "$name" || return 1
@@ -1303,6 +1384,7 @@ _cfctx_cmd_switch() {
     mkdir -p "$ctx_dir"
     chmod 700 "$ctx_dir" 2>/dev/null || true
     export CF_HOME="$ctx_dir"
+    _cfctx_emit_terminal_affordances "$name" "$ctx_dir"
     echo "→ $name    (CF_HOME=$CF_HOME)"
 
     # Source per-context env file if present.
@@ -1815,6 +1897,7 @@ Env vars:
   CFCTX_NO_OM_ENRICH=1    Skip Ops Manager enrichment on init-env
   CFCTX_NO_TERM_WRAPS=1   Skip bosh/cf TERM wraps even on exotic terminals
   CFCTX_SAFE_TERM=<TERM>  Replacement TERM used by the wraps (default: xterm-256color)
+  CFCTX_NO_TERM_AFFORDANCES=1  Skip terminal window-title / cursor-color / OSC 8 hyperlinks
 USAGE
 }
 

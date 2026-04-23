@@ -258,6 +258,33 @@ presence only (previous behavior).
     [!] CF token EXPIRED 2h ago — next switch will re-auth
 ```
 
+## Terminal affordances (title / cursor color / clickable URLs)
+
+On every `cfctx <name>`, cfctx emits three OSC escape sequences when
+stdout is a TTY:
+
+- **OSC 2** sets the window / tab title to `cfctx:<name>`. Visible in
+  the Ghostty tab bar, iTerm2 window titles, tmux status lines,
+  gnome-terminal tabs. Permanent per-tab "which foundation is this?"
+  without any prompt integration.
+- **OSC 12** sets the cursor color from the per-context `.cfctx-color`
+  tag. Set it with `cfctx color prod red` — cursor turns red on every
+  switch into `prod`. A second always-visible signal on top of the
+  prompt color.
+- **OSC 8** wraps the target URL in the `cfctx` listing as a clickable
+  hyperlink. Cmd-click (macOS) or Ctrl-click (Linux) opens the API in
+  your browser.
+
+`cfctx clear` resets the title and cursor to terminal defaults.
+
+These are universal VT/xterm standards supported by Ghostty, iTerm2,
+Terminal.app, WezTerm, kitty, tmux, gnome-terminal, and Konsole.
+Nothing here is Ghostty-specific — it just looks especially nice
+with Ghostty's native tab UI.
+
+Piped output (e.g. `cfctx | grep ndc`) stays clean because all emissions
+are gated on `[[ -t 1 ]]`. Disable entirely with `CFCTX_NO_TERM_AFFORDANCES=1`.
+
 ## Ghostty / Kitty / Alacritty (`xterm-ghostty` on remote hosts)
 
 If your local terminal sets `TERM=xterm-ghostty` (or `xterm-kitty`,
