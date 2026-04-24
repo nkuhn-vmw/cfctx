@@ -1,0 +1,53 @@
+name: bump-homebrew-formula
+
+# On every new v* tag, open a PR in nkuhn-vmw/homebrew-tap that
+# updates Formula/cfctx.rb's `url` and `sha256` to the new release.
+#
+# Requires a repo secret named HOMEBREW_TAP_TOKEN:
+#   1. Create a fine-grained PAT at https://github.com/settings/tokens?type=beta
+#      with Contents: read/write on nkuhn-vmw/homebrew-tap.
+#   2. Add it to this repo's secrets:
+#      gh secret set HOMEBREW_TAP_TOKEN --repo nkuhn-vmw/cfctx
+#
+# Without the secret, the job fails with a clear error — no harm done.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to bump the formula to (e.g. v0.3.1)"
+        required: true
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ -n "$INPUT_TAG" ]]; then
+            echo "value=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump formula via PR
+        uses: mislav/bump-homebrew-formula-action@v3
+        with:
+          formula-name: cfctx
+          formula-path: Formula/cfctx.rb
+          homebrew-tap: nkuhn-vmw/homebrew-tap
+          base-branch: main
+          tag-name: ${{ steps.tag.outputs.value }}
+          download-url: https://github.com/nkuhn-vmw/cfctx/archive/refs/tags/${{ steps.tag.outputs.value }}.tar.gz
+          commit-message: |
+            cfctx {{version}}
+
+            Auto-bumped by bump-formula workflow on release {{version}}.
+        env:
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

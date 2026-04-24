@@ -1,5 +1,11 @@
 # cfctx
 
+[![CI](https://github.com/nkuhn-vmw/cfctx/actions/workflows/ci.yml/badge.svg)](https://github.com/nkuhn-vmw/cfctx/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/nkuhn-vmw/cfctx?label=release)](https://github.com/nkuhn-vmw/cfctx/releases/latest)
+[![License](https://img.shields.io/github/license/nkuhn-vmw/cfctx)](LICENSE)
+[![Shell](https://img.shields.io/badge/shell-bash%20%7C%20zsh-blue)](https://github.com/nkuhn-vmw/cfctx)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](https://github.com/nkuhn-vmw/cfctx#install)
+
 **Per-shell Cloud Foundry / Tanzu context switcher. Think [kubectx](https://github.com/ahmetb/kubectx), for CF / Ops Manager / BOSH / CredHub.**
 
 Two muscle-memory commands:
@@ -18,6 +24,10 @@ OAuth tokens never collide across shells. On first touch of a foundation,
 cfctx asks **Ops Manager** via `om` for the CF API URL, BOSH env vars, and CF
 admin creds, writes them into the per-context env file, and logs in. Tokens
 cache in `$CF_HOME/.cf/config.json`; subsequent switches are sub-second.
+
+<!-- demo: record with `asciinema rec demo.cast` then `asciinema upload demo.cast`
+     and replace the ID below. Or embed the generated SVG from svg-term-cli. -->
+<!-- [![asciicast](https://asciinema.org/a/<ID>.svg)](https://asciinema.org/a/<ID>) -->
 
 ```
   cdc [env]  https://api.sys.cdc.example.com
@@ -57,17 +67,29 @@ Layered on top of that primitive, cfctx adds:
 
 ## Install
 
-### macOS
+### macOS — Homebrew (recommended)
 
 ```bash
-# Tanzu CLIs (adjust tap names if your org uses a mirror):
-brew install jq
+brew tap nkuhn-vmw/tap
+brew install cfctx
+echo 'source "$(brew --prefix)/opt/cfctx/libexec/cfctx.sh"' >> ~/.zshrc
+exec $SHELL
+```
+
+Tanzu CLIs that cfctx orchestrates (if you don't already have them):
+
+```bash
+brew install jq                                 # recommended — for CF_API / CF-creds auto-detection
+brew install fzf                                # optional — enables `cfctx pick`
 brew install cloudfoundry/tap/cf-cli@8
 brew install pivotal/tap/om
 brew install cloudfoundry/tap/bosh-cli
 brew install cloudfoundry/tap/credhub-cli
+```
 
-# cfctx itself:
+### macOS — from source (for contributors)
+
+```bash
 git clone https://github.com/nkuhn-vmw/cfctx.git ~/.local/share/cfctx
 bash ~/.local/share/cfctx/install.sh    # idempotently wires ~/.zshrc or ~/.bash_profile
 exec $SHELL
@@ -448,10 +470,13 @@ and roadmap in [`docs/roadmap.md`](docs/roadmap.md).
 
 - `cfctx lock <name>` — read-only safety rail (prompts on destructive ops).
 - direnv bridge (`cfctx direnv`) — auto-switch foundations on `cd`.
-- Homebrew tap / formula.
 - Install.sh `--link` flag (symlink instead of copy — keeps installed
   version in sync with a local clone).
 - Windows PowerShell port (deferred).
+
+**Homebrew tap:** available at
+[nkuhn-vmw/homebrew-tap](https://github.com/nkuhn-vmw/homebrew-tap).
+`brew install nkuhn-vmw/tap/cfctx` is the recommended install path.
 
 ---
 
