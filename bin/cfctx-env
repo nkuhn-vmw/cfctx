@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# cfctx-env — emit shell `export` lines for a cfctx foundation context.
+#
+# Designed for non-interactive use: scripts, CI, Claude Code Bash tool
+# calls, anywhere sourcing the cfctx.sh shell function isn't practical.
+#
+# Usage:
+#   eval "$(cfctx-env <foundation>)"        # load context env into this shell
+#   cfctx-env <foundation>                   # just print (for inspection)
+#   cfctx-env --list                         # print known foundation names
+#
+# Behavior:
+#   - Reads $CFCTX_ROOT/<foundation>/context.env (default $HOME/.cf-homes).
+#   - Emits CF_HOME plus every CF_*/OM_*/BOSH_*/CREDHUB_* var found there,
+#     properly shell-quoted so eval is safe.
+#   - Does NOT log in to CF or query Ops Manager — relies on cached tokens
+#     and previously-enriched context.env values. If tokens are expired,
+#     `cf` calls will return 401 and you should run interactively:
+#       cfctx <foundation>     # in your zsh shell, will re-auth
+#
+# Why this exists:
+#   `cfctx` is a sourced shell function (it must mutate the parent shell's
+#   env). That mode doesn't fit non-interactive shells where each invocation
+#   is independent. cfctx-env is the bridge: a stateless binary that prints
+#   what a cfctx switch *would* export, ready for eval.
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+cfctx-env — emit shell export lines for a cfctx foundation context.
+
+Usage:
+  eval "$(cfctx-env <foundation>)"   # load env into the current shell
+  cfctx-env <foundation>              # just print (for inspection)
+  cfctx-env --list                    # list configured foundations
+  cfctx-env --help                    # this message
+
+Env:
+  CFCTX_ROOT  Override context root (default $HOME/.cf-homes).
+
+Notes:
+  Run `cfctx <foundation>` interactively (in zsh/bash with cfctx.sh sourced)
+  at least once to seed the context.env and establish a fresh CF token.
+  cfctx-env reuses both — it doesn't re-enrich or re-login.
+EOF
+}
+
+if [[ $# -eq 0 ]]; then
+    usage >&2
+    exit 1
+fi
+
+case "$1" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    --list|-l)
+        root="${CFCTX_ROOT:-$HOME/.cf-homes}"
+        if [[ ! -d "$root" ]]; then
+            exit 0   # nothing to list, not an error
+        fi
+        # `find` rather than glob — works cleanly on empty dirs in zsh too.
+        find "$root" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort
+        exit 0
+        ;;
+    -*)
+        echo "cfctx-env: unknown flag '$1'" >&2
+        usage >&2
+        exit 1
+        ;;
+esac
+
+name="$1"
+case "$name" in
+    -*|.*|*/*|*' '*|*$'\t'*)
+        echo "cfctx-env: invalid foundation name '$name'" >&2
+        exit 1
+        ;;
+esac
+
+root="${CFCTX_ROOT:-$HOME/.cf-homes}"
+ctx="$root/$name"
+
+if [[ ! -d "$ctx" ]]; then
+    echo "cfctx-env: no context '$name' under $root" >&2
+    echo "cfctx-env: available — $(find "$root" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort | paste -sd, - || echo none)" >&2
+    exit 1
+fi
+
+# CF_HOME points at the per-context cf config dir — the cornerstone export.
+printf 'export CF_HOME=%q\n' "$ctx"
+
+# Source the env file in a sub-subshell to capture all the cfctx-relevant
+# vars without leaking other env into the output. Each var is shell-quoted
+# via printf %q so values with spaces, $, ", \, ` are eval-safe.
+if [[ -f "$ctx/context.env" ]]; then
+    (
+        set -a
+        # shellcheck disable=SC1091
+        source "$ctx/context.env"
+        set +a
+        # The fixed list of vars cfctx tracks. Anything outside this set in
+        # context.env (e.g. user's own helpers) is not exported via cfctx-env.
+        for var in \
+            CF_API CF_USERNAME CF_PASSWORD CF_ORG CF_SPACE \
+            OM_TARGET OM_USERNAME OM_PASSWORD OM_CLIENT_ID OM_CLIENT_SECRET \
+            OM_SKIP_SSL_VALIDATION OM_DECRYPTION_PASSPHRASE OM_CA_CERT \
+            OM_CONNECT_TIMEOUT OM_REQUEST_TIMEOUT OM_TRACE OM_VARS_ENV \
+            BOSH_ENVIRONMENT BOSH_CLIENT BOSH_CLIENT_SECRET BOSH_CA_CERT \
+            BOSH_DEPLOYMENT BOSH_GW_HOST BOSH_GW_USER BOSH_GW_PRIVATE_KEY \
+            CREDHUB_SERVER CREDHUB_CLIENT CREDHUB_SECRET CREDHUB_CA_CERT
+        do
+            value="${!var:-}"
+            if [[ -n "$value" ]]; then
+                printf 'export %s=%q\n' "$var" "$value"
+            fi
+        done
+    )
+fi

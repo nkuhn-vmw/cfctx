@@ -13,7 +13,7 @@
 # It lives inside the context directory with mode 0600 and is never
 # meant to be committed to any repo.
 
-CFCTX_VERSION="0.3.1"
+CFCTX_VERSION="0.3.2"
 
 cfctx() {
     local CFCTX_ROOT="${CFCTX_ROOT:-$HOME/.cf-homes}"
@@ -492,8 +492,11 @@ _cfctx_discover_om_file() {
     if [[ -n "${CFCTX_OM_ENV_PATTERNS:-}" ]]; then
         local -a patterns
         if [[ -n "${ZSH_VERSION:-}" ]]; then
-            # shellcheck disable=SC2296,SC2206  # zsh-only ${=var} word-split
-            patterns=(${=CFCTX_OM_ENV_PATTERNS})
+            # zsh-only ${=var} word-split — wrap in `eval` so bash never has
+            # to PARSE this syntax (some strict-mode bash setups choke at
+            # parse time even when the branch is unreachable).
+            # shellcheck disable=SC2296,SC2206
+            eval 'patterns=(${=CFCTX_OM_ENV_PATTERNS})'
         else
             # shellcheck disable=SC2206  # intentional word-split in bash
             patterns=($CFCTX_OM_ENV_PATTERNS)
@@ -1903,18 +1906,26 @@ USAGE
 
 # -----------------------------------------------------------------------------
 # zsh tab-completion for context names and subcommands.
+#
+# Whole block wrapped in `eval` so bash never has to PARSE the zsh-only
+# syntax inside (${+functions[compdef]}, ${(f)...}, etc.). The outer
+# guard short-circuits in bash so eval is unreachable there.
 # -----------------------------------------------------------------------------
-if [[ -n "${ZSH_VERSION:-}" ]] && (( ${+functions[compdef]} )); then
+if [[ -n "${ZSH_VERSION:-}" ]]; then
     # shellcheck disable=SC2034,SC2206,SC2296  # zsh-only syntax; file is dual-shell
-    _cfctx() {
-        local root="${CFCTX_ROOT:-$HOME/.cf-homes}"
-        local -a subs ctxs
-        subs=(status ls rm cp mv edit init-env env clear version help)
-        [[ -d "$root" ]] && ctxs=(${(f)"$(ls -1 "$root" 2>/dev/null)"})
-        _describe 'subcommand' subs
-        _describe 'context' ctxs
-    }
-    compdef _cfctx cfctx
+    eval '
+        if (( ${+functions[compdef]} )); then
+            _cfctx() {
+                local root="${CFCTX_ROOT:-$HOME/.cf-homes}"
+                local -a subs ctxs
+                subs=(status ls rm cp mv edit init-env env clear version help)
+                [[ -d "$root" ]] && ctxs=(${(f)"$(ls -1 "$root" 2>/dev/null)"})
+                _describe "subcommand" subs
+                _describe "context" ctxs
+            }
+            compdef _cfctx cfctx
+        fi
+    '
 fi
 
 # -----------------------------------------------------------------------------

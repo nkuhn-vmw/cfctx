@@ -280,6 +280,62 @@ presence only (previous behavior).
     [!] CF token EXPIRED 2h ago — next switch will re-auth
 ```
 
+## Non-interactive shells (CI / Claude Code / scripts)
+
+`cfctx` is a sourced shell function — it has to mutate the parent
+shell's env. That model doesn't fit non-interactive contexts where
+each invocation is a fresh shell:
+
+- CI scripts that spin up disposable bash shells.
+- Claude Code (or other agentic tools) where every `Bash` tool call
+  is independent.
+- One-shot scripts where you don't want to permanently modify your shell.
+
+For those cases, use the **`cfctx-env`** standalone helper — a small
+script that prints `export` lines for a foundation, ready to `eval`
+in any shell:
+
+```bash
+# In any bash/zsh, no sourcing required:
+eval "$(cfctx-env tdc)"
+cf apps                  # works — CF_HOME + tokens loaded
+om staged-products       # works — OM_* loaded
+bosh vms                 # works — BOSH_* loaded
+```
+
+Also useful:
+
+```bash
+cfctx-env --list         # which foundations are configured
+cfctx-env tdc            # just print (no eval) — for inspection
+cfctx-env --help
+```
+
+The script lives at `bin/cfctx-env` in the repo. With Homebrew install
+it's on your `PATH` automatically. Without Homebrew, add the repo's
+`bin/` to `PATH` or call by full path.
+
+**What `cfctx-env` does NOT do** vs. interactive `cfctx`:
+
+- Doesn't query Ops Manager (no enrichment / re-auth round-trip).
+- Doesn't run `cf api` / `cf auth` — relies on cached tokens.
+- Doesn't install bosh/cf TERM wraps or terminal affordances.
+
+These would all require shell-function semantics. If your context.env
+is stale (foundation re-paved, certs rotated), run an interactive
+`cfctx <foundation>` once in your zsh to re-enrich, then `cfctx-env`
+in your scripts will pick up the fresh values from disk.
+
+If you're using cfctx with Claude Code, the recommended pattern is:
+
+```bash
+# In every Bash tool call that needs CF/OM/BOSH access:
+eval "$(cfctx-env tdc)" && cf apps
+```
+
+Or wrap it in a one-line shell alias / Claude skill so you don't have
+to type the `eval` boilerplate every call.
+
 ## Terminal affordances (title / cursor color / clickable URLs)
 
 On every `cfctx <name>`, cfctx emits three OSC escape sequences when
@@ -412,6 +468,8 @@ cfctx/
 ├── README.md
 ├── LICENSE                           # Apache-2.0
 ├── cfctx.sh                          # the sourced shell function
+├── bin/
+│   └── cfctx-env                     # standalone helper for non-interactive shells
 ├── install.sh                        # idempotent rc-file installer
 ├── completions/
 │   ├── cfctx.zsh
@@ -442,8 +500,17 @@ cfctx/
 
 ## Status and roadmap
 
-v0.3.1. Production-ready for single-user workstations. Full design doc
+v0.3.2. Production-ready for single-user workstations. Full design doc
 and roadmap in [`docs/roadmap.md`](docs/roadmap.md).
+
+**Shipped in v0.3.2:**
+
+- **`cfctx-env` standalone helper** for non-interactive shells (CI,
+  Claude Code, scripts). `eval "$(cfctx-env <foundation>)"` loads the
+  context env into any shell without sourcing the cfctx function. See
+  [Non-interactive shells](#non-interactive-shells-ci--claude-code--scripts).
+- Defensive `eval`-wrap around zsh-only syntax in `cfctx.sh` so even
+  strict-mode bash setups can source the file cleanly.
 
 **Shipped in v0.3.1:**
 
