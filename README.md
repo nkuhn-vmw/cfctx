@@ -280,6 +280,38 @@ presence only (previous behavior).
     [!] CF token EXPIRED 2h ago — next switch will re-auth
 ```
 
+## UAA / `uaac` integration
+
+Each Tanzu foundation has up to four UAAs (cf, ops manager, bosh, credhub).
+The CF UAA is the one operators touch most — managing CF users, configuring
+SSO providers, etc. cfctx enriches both the CF UAA URL and the OpsMan UAA
+URL into `context.env`, plus the CF UAA admin client secret pulled
+straight from Ops Manager.
+
+After `cfctx <foundation>`:
+
+```bash
+echo $UAA_URL                    # → https://uaa.<system_domain>  (CF UAA)
+echo $UAA_ADMIN_CLIENT            # → admin
+echo $UAA_ADMIN_CLIENT_SECRET     # → <pulled from .uaa.admin_client_credentials>
+echo $OM_UAA_URL                  # → <om_target>/uaa  (OpsMan UAA — rarely used)
+```
+
+To target the CF UAA via `uaac` and fetch a token in one step:
+
+```bash
+cfctx uaa-login                  # default: CF UAA
+# Under the hood:
+#   uaac target $UAA_URL [--skip-ssl-validation]
+#   uaac token client get $UAA_ADMIN_CLIENT -s $UAA_ADMIN_CLIENT_SECRET
+#   uaac context
+
+cfctx uaa-login --om             # explicit: OpsMan UAA (uses OM_CLIENT_ID/SECRET)
+```
+
+`uaac` not installed? `gem install cf-uaac`. The subcommand prints a clear
+hint if it's missing.
+
 ## Non-interactive shells (CI / Claude Code / scripts)
 
 `cfctx` is a sourced shell function — it has to mutate the parent
@@ -500,8 +532,19 @@ cfctx/
 
 ## Status and roadmap
 
-v0.3.2. Production-ready for single-user workstations. Full design doc
+v0.4.0. Production-ready for single-user workstations. Full design doc
 and roadmap in [`docs/roadmap.md`](docs/roadmap.md).
+
+**Shipped in v0.4.0:**
+
+- **UAA / `uaac` integration.** Enrichment now writes `UAA_URL`,
+  `UAA_ADMIN_CLIENT`, `UAA_ADMIN_CLIENT_SECRET` (from
+  `.uaa.admin_client_credentials`), and `OM_UAA_URL` to `context.env`.
+  New `cfctx uaa-login` subcommand wraps `uaac target` + `uaac token
+  client get` against the CF UAA by default, or OpsMan UAA with `--om`.
+- **`set -e` safety.** Internal `cmd; rc=$?` patterns refactored to
+  `cmd || rc=$?` so `cfctx enrich` works correctly under bats' set-e
+  test mode and CI shells with `set -e`.
 
 **Shipped in v0.3.2:**
 

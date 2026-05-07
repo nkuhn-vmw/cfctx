@@ -20,6 +20,7 @@ _cfctx() {
         'enrich:re-query Ops Manager to refresh BOSH_*/CF_API'
         'target:init-env (if missing) + switch in one step'
         'pick:fzf-based interactive foundation picker'
+        'uaa-login:target a UAA via uaac and fetch a token'
         'doctor:diagnose cfctx / context state'
         'prompt:emit a shell prompt snippet (zsh|bash|starship)'
         'color:set/clear per-context color for the prompt'

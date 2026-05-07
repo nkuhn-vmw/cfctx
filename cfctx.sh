@@ -13,7 +13,7 @@
 # It lives inside the context directory with mode 0600 and is never
 # meant to be committed to any repo.
 
-CFCTX_VERSION="0.3.2"
+CFCTX_VERSION="0.4.0"
 
 cfctx() {
     local CFCTX_ROOT="${CFCTX_ROOT:-$HOME/.cf-homes}"
@@ -86,6 +86,11 @@ cfctx() {
             _cfctx_cmd_pick "$CFCTX_ROOT" "$@"
             ;;
 
+        uaa-login|uaac-login)
+            shift
+            _cfctx_cmd_uaa_login "$@"
+            ;;
+
         doctor)
             shift
             _cfctx_cmd_doctor "$CFCTX_ROOT" "$@"
@@ -105,7 +110,9 @@ cfctx() {
             unset CF_HOME CF_API CF_ORG CF_SPACE CF_USERNAME CF_PASSWORD
             # Best-effort: clear common Tanzu env vars we may have sourced.
             unset OM_TARGET OM_USERNAME OM_PASSWORD OM_CLIENT_ID OM_CLIENT_SECRET OM_SKIP_SSL_VALIDATION \
-                  OM_DECRYPTION_PASSPHRASE OM_CONNECT_TIMEOUT OM_REQUEST_TIMEOUT OM_TRACE OM_VARS_ENV OM_CA_CERT
+                  OM_DECRYPTION_PASSPHRASE OM_CONNECT_TIMEOUT OM_REQUEST_TIMEOUT OM_TRACE OM_VARS_ENV OM_CA_CERT \
+                  OM_UAA_URL
+            unset UAA_URL UAA_ADMIN_CLIENT UAA_ADMIN_CLIENT_SECRET
             unset BOSH_ENVIRONMENT BOSH_CLIENT BOSH_CLIENT_SECRET BOSH_CA_CERT BOSH_DEPLOYMENT \
                   BOSH_GW_HOST BOSH_GW_USER BOSH_GW_PRIVATE_KEY
             unset CREDHUB_SERVER CREDHUB_CLIENT CREDHUB_SECRET CREDHUB_CA_CERT
@@ -959,7 +966,8 @@ _cfctx_enrich_from_om() {
     local products cf_guid props system_domain cf_api stderr_file rc
     stderr_file=$(mktemp)
 
-    products=$(_cfctx_om_clean -e "$om_file" curl -p '/api/v0/staged/products' 2>"$stderr_file"); rc=$?
+    rc=0
+    products=$(_cfctx_om_clean -e "$om_file" curl -p '/api/v0/staged/products' 2>"$stderr_file") || rc=$?
     if (( rc != 0 )) || [[ -z "$products" ]]; then
         echo "    (om curl failed fetching staged products — CF_API skipped)"
         [[ -s "$stderr_file" ]] && sed 's/^/      om: /' "$stderr_file"
@@ -973,7 +981,8 @@ _cfctx_enrich_from_om() {
         return 0
     fi
 
-    props=$(_cfctx_om_clean -e "$om_file" curl -p "/api/v0/staged/products/$cf_guid/properties" 2>"$stderr_file"); rc=$?
+    rc=0
+    props=$(_cfctx_om_clean -e "$om_file" curl -p "/api/v0/staged/products/$cf_guid/properties" 2>"$stderr_file") || rc=$?
     if (( rc != 0 )) || [[ -z "$props" ]]; then
         echo "    (om curl failed fetching cf properties — CF_API skipped)"
         [[ -s "$stderr_file" ]] && sed 's/^/      om: /' "$stderr_file"
@@ -997,7 +1006,8 @@ _cfctx_enrich_from_om() {
     # the cf product's own UAA). Required for `cf auth` to succeed.
     local cf_creds cf_user cf_pass
     stderr_file=$(mktemp)
-    cf_creds=$(_cfctx_om_clean -e "$om_file" curl -p "/api/v0/deployed/products/$cf_guid/credentials/.uaa.admin_credentials" 2>"$stderr_file"); rc=$?
+    rc=0
+    cf_creds=$(_cfctx_om_clean -e "$om_file" curl -p "/api/v0/deployed/products/$cf_guid/credentials/.uaa.admin_credentials" 2>"$stderr_file") || rc=$?
     if (( rc == 0 )) && [[ -n "$cf_creds" ]]; then
         cf_user=$(printf '%s' "$cf_creds" | jq -r '.credential.value.identity // empty' 2>/dev/null)
         cf_pass=$(printf '%s' "$cf_creds" | jq -r '.credential.value.password // empty' 2>/dev/null)
@@ -1024,6 +1034,44 @@ _cfctx_enrich_from_om() {
         _cfctx_set_env_var "$env_file" "CF_SPACE" "system"
         echo "    ✓ CF_SPACE defaulted to 'system'"
     fi
+
+    # 5) UAA URLs + admin client secret. Two UAAs per foundation:
+    #    - CF UAA at https://uaa.<system_domain>  (the common one — manage CF users / SSO)
+    #    - OM UAA at $OM_TARGET/uaa               (rare — manage Ops Manager users)
+    # Default `cfctx uaa-login` targets CF UAA. `--om` flag targets the other.
+    _cfctx_set_env_var "$env_file" "UAA_URL" "https://uaa.$system_domain"
+    _cfctx_set_env_var "$env_file" "UAA_ADMIN_CLIENT" "admin"
+    echo "    ✓ UAA_URL set to https://uaa.$system_domain (CF UAA)"
+
+    # OM UAA URL — derive from OM_TARGET (already in context.env via yaml import).
+    local om_target_for_uaa
+    om_target_for_uaa=$(_cfctx_read_env_var "$env_file" OM_TARGET)
+    if [[ -n "$om_target_for_uaa" ]]; then
+        # Strip any trailing slash, then append /uaa.
+        om_target_for_uaa="${om_target_for_uaa%/}"
+        _cfctx_set_env_var "$env_file" "OM_UAA_URL" "$om_target_for_uaa/uaa"
+        echo "    ✓ OM_UAA_URL set to $om_target_for_uaa/uaa"
+    fi
+
+    # CF UAA admin client secret — distinct credential from .uaa.admin_credentials
+    # (which is the user). uaac uses client_credentials grant against the client.
+    local uaa_client_creds uaa_admin_secret
+    stderr_file=$(mktemp)
+    rc=0
+    uaa_client_creds=$(_cfctx_om_clean -e "$om_file" curl -p "/api/v0/deployed/products/$cf_guid/credentials/.uaa.admin_client_credentials" 2>"$stderr_file") || rc=$?
+    if (( rc == 0 )) && [[ -n "$uaa_client_creds" ]]; then
+        uaa_admin_secret=$(printf '%s' "$uaa_client_creds" | jq -r '.credential.value.password // empty' 2>/dev/null)
+        if [[ -n "$uaa_admin_secret" ]]; then
+            _cfctx_set_env_var "$env_file" "UAA_ADMIN_CLIENT_SECRET" "$uaa_admin_secret"
+            echo "    ✓ UAA_ADMIN_CLIENT_SECRET pulled from Ops Manager"
+        else
+            echo "    (uaa.admin_client_credentials response missing password — UAA_ADMIN_CLIENT_SECRET not set)"
+        fi
+    else
+        echo "    (couldn't fetch UAA admin client creds — 'cfctx uaa-login' will need a manual secret)"
+        [[ -s "$stderr_file" ]] && sed 's/^/      om: /' "$stderr_file"
+    fi
+    rm -f "$stderr_file"
 }
 
 # Test whether context.env contains an uncommented `[export ]KEY=...` line.
@@ -1555,7 +1603,7 @@ _cfctx_cmd_doctor() {
     echo
     echo "-- Tools --"
     local t
-    for t in cf om jq bosh credhub awk sed; do
+    for t in cf om jq bosh credhub uaac awk sed; do
         if command -v "$t" >/dev/null 2>&1; then
             echo "[${_tick}] $t: $(command -v "$t")"
         else
@@ -1563,6 +1611,7 @@ _cfctx_cmd_doctor() {
                 cf|om) echo "[${_cross}] $t NOT in PATH (required)"; issues=$((issues+1));;
                 jq)    echo "[${_warn}] jq NOT in PATH — CF_API/creds detection will be skipped";;
                 bosh|credhub) echo "[${_warn}] $t NOT in PATH — will work if you don't use $t directly";;
+                uaac)  echo "[${_warn}] uaac NOT in PATH — 'cfctx uaa-login' will be unavailable (gem install cf-uaac)";;
                 *)     echo "[${_cross}] $t NOT in PATH"; issues=$((issues+1));;
             esac
         fi
@@ -1857,6 +1906,109 @@ EOF
     _cfctx_cmd_target "$root" "$name_picked"
 }
 
+# `cfctx uaa-login [--om]` — target a UAA and fetch a token via uaac.
+#
+# Default targets the CF product's UAA (the common case — managing CF users,
+# SSO, scopes). `--om` targets Ops Manager's UAA instead (rarely needed).
+# Honors $UAA_URL / $OM_UAA_URL / $UAA_ADMIN_CLIENT_SECRET / $OM_CLIENT_SECRET
+# from the currently-active context.env (run `cfctx <foundation>` first).
+_cfctx_cmd_uaa_login() {
+    local target="cf" client="" secret="" url=""
+    while (( $# )); do
+        case "$1" in
+            -h|--help)
+                cat <<'HELP'
+Usage: cfctx uaa-login [--om]
+
+Target a UAA via the `uaac` CLI and fetch a token using client_credentials.
+
+By default, targets the CF product's UAA at $UAA_URL using the admin client
+($UAA_ADMIN_CLIENT / $UAA_ADMIN_CLIENT_SECRET — populated by `cfctx enrich`).
+
+  --om     Target Ops Manager's UAA at $OM_UAA_URL using $OM_CLIENT_ID /
+           $OM_CLIENT_SECRET. Errors if those aren't set (e.g. when om-cli
+           yaml uses username/password rather than client credentials).
+
+Requires `uaac` (cf-uaac gem):  gem install cf-uaac
+HELP
+                return 0
+                ;;
+            --om)
+                target="om"; shift ;;
+            *)
+                echo "cfctx: unknown flag '$1' (try cfctx uaa-login --help)" >&2
+                return 1
+                ;;
+        esac
+    done
+
+    if ! command -v uaac >/dev/null 2>&1; then
+        cat >&2 <<EOF
+cfctx uaa-login: 'uaac' is not installed.
+  Install:  gem install cf-uaac
+  Or via brew:  brew install cf-uaac    (if available in your tap set)
+EOF
+        return 1
+    fi
+
+    case "$target" in
+        cf)
+            url="${UAA_URL:-}"
+            client="${UAA_ADMIN_CLIENT:-admin}"
+            secret="${UAA_ADMIN_CLIENT_SECRET:-}"
+            if [[ -z "$url" ]]; then
+                echo "cfctx uaa-login: UAA_URL is unset — run 'cfctx <foundation>' first (or 'cfctx enrich <name>' to refresh)" >&2
+                return 1
+            fi
+            if [[ -z "$secret" ]]; then
+                echo "cfctx uaa-login: UAA_ADMIN_CLIENT_SECRET is unset — 'cfctx enrich <name>' to pull it from Ops Manager" >&2
+                return 1
+            fi
+            ;;
+        om)
+            url="${OM_UAA_URL:-}"
+            client="${OM_CLIENT_ID:-}"
+            secret="${OM_CLIENT_SECRET:-}"
+            if [[ -z "$url" ]]; then
+                echo "cfctx uaa-login: OM_UAA_URL is unset — run 'cfctx <foundation>' first" >&2
+                return 1
+            fi
+            if [[ -z "$client" || -z "$secret" ]]; then
+                cat >&2 <<EOF
+cfctx uaa-login --om: OM_CLIENT_ID / OM_CLIENT_SECRET aren't set.
+This foundation uses username/password for OpsMan (OM_USERNAME / OM_PASSWORD)
+rather than client credentials. uaac client_credentials grant requires the
+client variant. Workaround: provision a UAA client in OpsMan UAA and add
+client-id / client-secret to the om-cli yaml.
+EOF
+                return 1
+            fi
+            ;;
+    esac
+
+    # Respect SSL skip flag from OM_SKIP_SSL_VALIDATION (lab foundations).
+    local skip_ssl=""
+    case "${OM_SKIP_SSL_VALIDATION:-${CF_SKIP_SSL_VALIDATION:-}}" in
+        true|yes|1|True|TRUE) skip_ssl="--skip-ssl-validation" ;;
+    esac
+
+    echo "  uaac: targeting $url ($target UAA)"
+    # shellcheck disable=SC2086  # intentional word-split on skip_ssl
+    if ! uaac target "$url" $skip_ssl >/dev/null 2>&1; then
+        echo "  uaac target failed — check $url and network reachability" >&2
+        return 1
+    fi
+
+    echo "  uaac: client_credentials grant for client '$client'"
+    if ! uaac token client get "$client" -s "$secret" >/dev/null 2>&1; then
+        echo "  uaac auth failed — verify the client + secret" >&2
+        return 1
+    fi
+
+    echo "  ✓ uaac authenticated"
+    uaac context 2>/dev/null | sed 's/^/    /'
+}
+
 _cfctx_cmd_help() {
     cat <<USAGE
 cfctx $CFCTX_VERSION — per-shell CF CLI / Tanzu context switcher
@@ -1869,6 +2021,8 @@ cfctx $CFCTX_VERSION — per-shell CF CLI / Tanzu context switcher
                         first login, tokens are cached — re-runs are instant.
   cfctx target <name>   Explicit alias for the bare form above.
   cfctx pick            Open fzf to fuzzy-pick a foundation interactively.
+  cfctx uaa-login [--om]  Target a UAA via uaac and fetch a token. Default
+                          targets CF UAA; --om targets OpsMan UAA.
   cfctx status          Show current context details (CF_HOME + cf target).
   cfctx ls              List all contexts (* marks current, [env] = has env file)
   cfctx rm <name>       Delete a context (prompts for confirmation)
