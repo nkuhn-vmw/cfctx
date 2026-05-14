@@ -1780,7 +1780,10 @@ _cfctx_prompt_segment() {
             white)   color="37" ;;
         esac
     fi
-    printf '\[\e[1;%sm\][cf:%s]\[\e[0m\] ' "$color" "$name"
+    # Use SOH (\001) / STX (\002) directly: bash only interprets \[ \] in
+    # the literal PS1, not in command-substitution output, so the latter
+    # would leak through as visible characters. SOH/STX work either way.
+    printf '\001\e[1;%sm\002[cf:%s]\001\e[0m\002 ' "$color" "$name"
 }
 # Prepend to your PS1:
 PS1='$(_cfctx_prompt_segment)'"$PS1"
