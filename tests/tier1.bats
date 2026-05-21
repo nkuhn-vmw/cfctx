@@ -24,7 +24,11 @@ setup() {
 @test "cfctx prompt bash emits a bash-shaped snippet" {
     run cfctx prompt bash
     [ "$status" -eq 0 ]
-    [[ "$output" == *'\[\e['* ]]
+    # SOH (\001) / STX (\002) wrap non-printing regions; \[ \] would leak
+    # through command substitution and is the regression we guard against.
+    [[ "$output" == *'\001\e['* ]]
+    [[ "$output" == *'\002'* ]]
+    [[ "$output" != *'\[\e['* ]]
     [[ "$output" == *"_cfctx_prompt_segment"* ]]
 }
 
