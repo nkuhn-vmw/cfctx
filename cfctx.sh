@@ -1743,6 +1743,25 @@ _cfctx_cmd_doctor() {
         fi
     done
 
+    # --- SSO / auth mode (active context) ---
+    if [[ -n "${CF_HOME:-}" && "$CF_HOME" != "$HOME" && -f "$CF_HOME/context.env" ]]; then
+        echo
+        echo "-- SSO / auth --"
+        local _amode _acid _acsec _acap _apass
+        _amode=$(_cfctx_read_env_var "$CF_HOME/context.env" CF_AUTH_MODE)
+        _acid=$(_cfctx_read_env_var "$CF_HOME/context.env" CF_UAA_CLIENT_ID)
+        _acsec=$(_cfctx_read_env_var "$CF_HOME/context.env" CF_UAA_CLIENT_SECRET)
+        _acap=$(_cfctx_read_env_var "$CF_HOME/context.env" CF_SSO_CAPABLE)
+        _apass=$(_cfctx_read_env_var "$CF_HOME/context.env" CF_PASSWORD)
+        echo "[${_tick}] CF_AUTH_MODE=${_amode:-auto}  CF_SSO_CAPABLE=${_acap:-0}"
+        if [[ "$_amode" == "client" && ( -z "$_acid" || -z "$_acsec" ) ]]; then
+            echo "[${_cross}] CF_AUTH_MODE=client but CF_UAA_CLIENT_ID/CF_UAA_CLIENT_SECRET incomplete"; issues=$((issues+1))
+        fi
+        if [[ "$_acap" == "1" && -n "$_apass" ]]; then
+            echo "[${_warn}] SSO-capable foundation still carries a legacy CF_PASSWORD — consider removing it"
+        fi
+    fi
+
     # --- Terminal / TERM wrap status ---
     echo
     echo "-- Terminal --"

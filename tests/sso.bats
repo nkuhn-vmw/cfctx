@@ -106,3 +106,27 @@ seed_ctx() {  # seed_ctx <name> <extra context.env lines...>
     # writes the fake token to $CF_HOME/.cf/config.json, so it must land here.
     grep -q 'fake-token' "$CFCTX_ROOT/bot/.cf/config.json"
 }
+
+@test "doctor flags client mode with missing client secret" {
+    seed_ctx bot 'export CF_AUTH_MODE="client"' 'export CF_UAA_CLIENT_ID="cfctx-bot"'
+    export CF_HOME="$CFCTX_ROOT/bot"
+    run cfctx doctor
+    [[ "$output" == *"CF_AUTH_MODE=client"* ]]
+    [[ "$output" == *"CF_UAA_CLIENT_SECRET"* ]]
+}
+
+@test "doctor warns when SSO-capable context still has CF_PASSWORD" {
+    seed_ctx dev 'export CF_SSO_CAPABLE="1"' 'export CF_PASSWORD="leftover"'
+    export CF_HOME="$CFCTX_ROOT/dev"
+    run cfctx doctor
+    [[ "$output" == *"legacy CF_PASSWORD"* ]]
+}
+
+@test "cfctx env masks CF_UAA_CLIENT_SECRET" {
+    seed_ctx bot 'export CF_UAA_CLIENT_SECRET="supersecretvalue"'
+    run cfctx env bot
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"supersecretvalue"* ]]
+    # Value is stored with shell quotes; awk masks the outer quotes as first/last chars → "***"
+    [[ "$output" == *'CF_UAA_CLIENT_SECRET="***"'* ]]
+}
