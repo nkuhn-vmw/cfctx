@@ -1019,7 +1019,7 @@ _cfctx_enrich_from_om() {
     _auth_mode=$(_cfctx_read_env_var "$env_file" CF_AUTH_MODE)
     _cf_client=$(_cfctx_read_env_var "$env_file" CF_UAA_CLIENT_ID)
     if [[ "$_auth_mode" == "sso" || "$_auth_mode" == "client" || -n "$_cf_client" ]]; then
-        echo "    (CF_AUTH_MODE=${_auth_mode:-auto} / client set — SSO mode — skipping CF admin password scrape)"
+        echo "    (CF_AUTH_MODE=${_auth_mode:-auto}, SSO/client auth — skipping CF admin password scrape)"
     else
     local cf_creds cf_user cf_pass
     stderr_file=$(mktemp)
@@ -1276,6 +1276,9 @@ _cfctx_resolve_cf_auth_mode() {
         # Unrecognized values fall through to auto resolution intentionally.
     esac
     local actor; actor=$(_cfctx_actor)
+    # Loose on purpose: presence of a client id is enough to RESOLVE to client.
+    # The login path checks id+secret and degrades gracefully if the secret is
+    # missing — don't tighten this to also require the secret here.
     if [[ "$actor" == "automation" && -n "${CF_UAA_CLIENT_ID:-}" ]]; then
         printf 'client'
     elif [[ "${CF_SSO_CAPABLE:-0}" == "1" ]]; then
@@ -1347,7 +1350,7 @@ _cfctx_auto_login() {
         case "$eff_mode" in
             client)
                 if [[ -z "${CF_UAA_CLIENT_ID:-}" || -z "${CF_UAA_CLIENT_SECRET:-}" ]]; then
-                    echo "  cf: CF_AUTH_MODE=client but CF_UAA_CLIENT_ID/SECRET unset — set them in context.env" >&2
+                    echo "  cf: client_credentials auth selected but CF_UAA_CLIENT_ID/SECRET unset — set them in context.env" >&2
                     return 0
                 fi
                 echo "  cf: client_credentials login as '$CF_UAA_CLIENT_ID'"

@@ -388,7 +388,7 @@ EOF
     [ "$status" -eq 0 ]
     # No human password persisted under SSO.
     ! grep -q '^export CF_PASSWORD=' "$CFCTX_ROOT/tdc/context.env"
-    [[ "$output" == *"SSO mode — skipping CF admin password scrape"* ]]
+    [[ "$output" == *"SSO/client auth — skipping CF admin password scrape"* ]]
 }
 
 @test "enrich seeds CF_SSO_CAPABLE=1 when UAA /login advertises an external IdP" {
