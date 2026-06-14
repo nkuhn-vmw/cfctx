@@ -1187,9 +1187,6 @@ _cfctx_token_humanize() {
     fi
 }
 
-# Decide whether a human or automation is driving this switch. Used to pick
-# the CF login flow (interactive SSO passcode vs client_credentials).
-#   CFCTX_FORCE_ACTOR  — test/override hook; echoed verbatim if set.
 # Interactive CF SSO login: print the one-time passcode URL, then hand off to
 # `cf login --sso` (which prompts for the passcode). Assumes `cf api` already
 # ran and CF_API is set. Returns cf's exit status.
@@ -1202,6 +1199,9 @@ _cfctx_cf_sso_login() {
     cf login --sso
 }
 
+# Decide whether a human or automation is driving this switch. Used to pick
+# the CF login flow (interactive SSO passcode vs client_credentials).
+#   CFCTX_FORCE_ACTOR  — test/override hook; echoed verbatim if set.
 _cfctx_actor() {
     if [[ -n "${CFCTX_FORCE_ACTOR:-}" ]]; then
         printf '%s' "$CFCTX_FORCE_ACTOR"; return 0
