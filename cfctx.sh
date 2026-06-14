@@ -2163,7 +2163,7 @@ _cfctx_cmd_auth() {
         auto|sso|client|password) ;;
         *) echo "cfctx auth: invalid mode '$mode' (auto|sso|client|password)" >&2; return 1 ;;
     esac
-    _cfctx_set_env_var "$env_file" "CF_AUTH_MODE" "$mode"
+    _cfctx_set_env_var "$env_file" "CF_AUTH_MODE" "$mode" || return 1
     echo "$name: CF_AUTH_MODE set to $mode"
 }
 
@@ -2184,8 +2184,14 @@ _cfctx_cmd_sso() {
     local env_file="$root/$name/context.env"
     [[ -f "$env_file" ]] || { echo "No env file for '$name'" >&2; return 1; }
 
-    # Load this context's env (CF_API / UAA_URL) without disturbing the caller's
-    # other state more than a normal switch would.
+    # `cfctx sso <name>` switches the shell to the named context (exports
+    # CF_HOME so cf's token store lands in the per-context dir, sources its env)
+    # and forces an interactive `cf login --sso` regardless of the stored
+    # CF_AUTH_MODE. CF_HOME must be exported before any cf call — otherwise cf
+    # writes tokens to the caller's current config dir (wrong foundation).
+    export CF_HOME="$root/$name"
+    echo "→ $name    (CF_HOME=$CF_HOME)"
+
     _cfctx_source_env "$env_file"
     if [[ -z "${CF_API:-}" ]]; then
         echo "cfctx sso: CF_API unset for '$name' — run 'cfctx $name' or 'cfctx enrich $name' first" >&2

@@ -90,6 +90,7 @@ setup() {
     [ "$status" -eq 0 ]
     grep -q 'CF_AUTH_MODE="client"' "$CFCTX_ROOT/tdc/context.env"
     run cfctx auth tdc
+    [ "$status" -eq 0 ]
     [[ "$output" == *"client"* ]]
 }
 

@@ -102,4 +102,7 @@ seed_ctx() {  # seed_ctx <name> <extra context.env lines...>
     [ "$status" -eq 0 ]
     grep -q '^login --sso' "$CFCTX_MOCK_CF_LOG"
     ! grep -q -- '--client-credentials' "$CFCTX_MOCK_CF_LOG"
+    # The CF_HOME fix directs cf's token store to the per-context dir; the mock
+    # writes the fake token to $CF_HOME/.cf/config.json, so it must land here.
+    grep -q 'fake-token' "$CFCTX_ROOT/bot/.cf/config.json"
 }
