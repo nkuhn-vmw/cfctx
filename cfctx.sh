@@ -91,6 +91,16 @@ cfctx() {
             _cfctx_cmd_uaa_login "$@"
             ;;
 
+        auth)
+            shift
+            _cfctx_cmd_auth "$CFCTX_ROOT" "$@"
+            ;;
+
+        sso)
+            shift
+            _cfctx_cmd_sso "$CFCTX_ROOT" "$@"
+            ;;
+
         doctor)
             shift
             _cfctx_cmd_doctor "$CFCTX_ROOT" "$@"
@@ -2126,6 +2136,70 @@ EOF
 
     echo "  ✓ uaac authenticated"
     uaac context 2>/dev/null | sed 's/^/    /'
+}
+
+# `cfctx auth <name> [auto|sso|client|password]` — show or set a context's
+# CF auth mode. No mode arg → print current mode + CF_SSO_CAPABLE.
+_cfctx_cmd_auth() {
+    local root="$1" name="${2:-}" mode="${3:-}"
+    if [[ -z "$name" ]]; then
+        echo "Usage: cfctx auth <name> [auto|sso|client|password]" >&2
+        return 1
+    fi
+    _cfctx_valid_name "$name" || return 1
+    local env_file="$root/$name/context.env"
+    if [[ ! -f "$env_file" ]]; then
+        echo "No env file for '$name' — create with: cfctx init-env $name" >&2
+        return 1
+    fi
+    if [[ -z "$mode" ]]; then
+        local cur cap
+        cur=$(_cfctx_read_env_var "$env_file" CF_AUTH_MODE)
+        cap=$(_cfctx_read_env_var "$env_file" CF_SSO_CAPABLE)
+        echo "$name: CF_AUTH_MODE=${cur:-auto} CF_SSO_CAPABLE=${cap:-0}"
+        return 0
+    fi
+    case "$mode" in
+        auto|sso|client|password) ;;
+        *) echo "cfctx auth: invalid mode '$mode' (auto|sso|client|password)" >&2; return 1 ;;
+    esac
+    _cfctx_set_env_var "$env_file" "CF_AUTH_MODE" "$mode"
+    echo "$name: CF_AUTH_MODE set to $mode"
+}
+
+# `cfctx sso [<name>]` — force an interactive CF SSO passcode login for a
+# context, regardless of its stored CF_AUTH_MODE. Use when an automation
+# context's human owner needs to act as themselves.
+_cfctx_cmd_sso() {
+    local root="$1" name="${2:-}"
+    if [[ -z "$name" ]]; then
+        if [[ -n "${CF_HOME:-}" && "$CF_HOME" != "$HOME" ]]; then
+            name=$(basename "$CF_HOME")
+        else
+            echo "Usage: cfctx sso <name>" >&2
+            return 1
+        fi
+    fi
+    _cfctx_valid_name "$name" || return 1
+    local env_file="$root/$name/context.env"
+    [[ -f "$env_file" ]] || { echo "No env file for '$name'" >&2; return 1; }
+
+    # Load this context's env (CF_API / UAA_URL) without disturbing the caller's
+    # other state more than a normal switch would.
+    _cfctx_source_env "$env_file"
+    if [[ -z "${CF_API:-}" ]]; then
+        echo "cfctx sso: CF_API unset for '$name' — run 'cfctx $name' or 'cfctx enrich $name' first" >&2
+        return 1
+    fi
+    command -v cf >/dev/null 2>&1 || { echo "cfctx sso: cf not in PATH" >&2; return 1; }
+
+    local skip_ssl_flag=""
+    case "${CF_SKIP_SSL_VALIDATION:-${OM_SKIP_SSL_VALIDATION:-}}" in
+        true|yes|1|True|TRUE) skip_ssl_flag="--skip-ssl-validation" ;;
+    esac
+    # shellcheck disable=SC2086
+    cf api "$CF_API" $skip_ssl_flag >/dev/null 2>&1 || { echo "cfctx sso: cf api failed for $CF_API" >&2; return 1; }
+    _cfctx_cf_sso_login
 }
 
 _cfctx_cmd_help() {

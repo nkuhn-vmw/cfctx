@@ -83,3 +83,19 @@ setup() {
     [ "$status" -eq 0 ]
     [ "$output" = "password" ]
 }
+
+@test "cfctx auth sets and shows CF_AUTH_MODE" {
+    mkdir -p "$CFCTX_ROOT/tdc"; : > "$CFCTX_ROOT/tdc/context.env"; chmod 600 "$CFCTX_ROOT/tdc/context.env"
+    run cfctx auth tdc client
+    [ "$status" -eq 0 ]
+    grep -q 'CF_AUTH_MODE="client"' "$CFCTX_ROOT/tdc/context.env"
+    run cfctx auth tdc
+    [[ "$output" == *"client"* ]]
+}
+
+@test "cfctx auth rejects an invalid mode" {
+    mkdir -p "$CFCTX_ROOT/tdc"; : > "$CFCTX_ROOT/tdc/context.env"; chmod 600 "$CFCTX_ROOT/tdc/context.env"
+    run cfctx auth tdc bogus
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"invalid mode"* ]]
+}

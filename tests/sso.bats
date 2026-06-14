@@ -92,3 +92,14 @@ seed_ctx() {  # seed_ctx <name> <extra context.env lines...>
     [[ "$output" == *"SSO-only and this is non-interactive"* ]]
     ! grep -q '^login ' "$CFCTX_MOCK_CF_LOG"
 }
+
+@test "cfctx sso forces login --sso even when mode is client" {
+    seed_ctx bot 'export CF_AUTH_MODE="client"' \
+                 'export CF_UAA_CLIENT_ID="cfctx-bot"' \
+                 'export CF_UAA_CLIENT_SECRET="s3cr3t"'
+    run env CFCTX_FORCE_ACTOR=human bash -c \
+        'source "'"$BATS_TEST_DIRNAME"'/../cfctx.sh"; cfctx sso bot'
+    [ "$status" -eq 0 ]
+    grep -q '^login --sso' "$CFCTX_MOCK_CF_LOG"
+    ! grep -q -- '--client-credentials' "$CFCTX_MOCK_CF_LOG"
+}
