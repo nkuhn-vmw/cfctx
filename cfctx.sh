@@ -1187,6 +1187,41 @@ _cfctx_token_humanize() {
     fi
 }
 
+# Decide whether a human or automation is driving this switch. Used to pick
+# the CF login flow (interactive SSO passcode vs client_credentials).
+#   CFCTX_FORCE_ACTOR  — test/override hook; echoed verbatim if set.
+_cfctx_actor() {
+    if [[ -n "${CFCTX_FORCE_ACTOR:-}" ]]; then
+        printf '%s' "$CFCTX_FORCE_ACTOR"; return 0
+    fi
+    if [[ "${CF_AUTH_MODE:-}" == "client" ]] \
+        || [[ -n "${CFCTX_NONINTERACTIVE:-}" ]] \
+        || [[ -n "${CI:-}" ]] \
+        || ! [ -t 0 ]; then
+        printf 'automation'
+    else
+        printf 'human'
+    fi
+}
+
+# Resolve the effective CF auth mode from CF_AUTH_MODE (default 'auto') and,
+# for 'auto', the actor + available credentials. Prints one of:
+#   client | sso | password
+_cfctx_resolve_cf_auth_mode() {
+    local mode="${CF_AUTH_MODE:-auto}"
+    case "$mode" in
+        sso|client|password) printf '%s' "$mode"; return 0 ;;
+    esac
+    local actor; actor=$(_cfctx_actor)
+    if [[ "$actor" == "automation" && -n "${CF_UAA_CLIENT_ID:-}" ]]; then
+        printf 'client'
+    elif [[ "${CF_SSO_CAPABLE:-0}" == "1" ]]; then
+        printf 'sso'
+    else
+        printf 'password'
+    fi
+}
+
 # Auto-login to CF using CF_API + (CF_USERNAME or OM_USERNAME) +
 # (CF_PASSWORD or OM_PASSWORD). Called from _cfctx_cmd_switch after
 # context.env has been sourced. Silent if cf is not installed, CF_API
