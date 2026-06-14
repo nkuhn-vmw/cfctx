@@ -158,7 +158,7 @@ export CF_UAA_CLIENT_SECRET="s3cr3t"
 export CF_SSO_CAPABLE="1"
 EOF
     chmod 600 "$CFCTX_ROOT/tdc/context.env"
-    run "$BATS_TEST_DIRNAME/../bin/cfctx-env" tdc
+    run "$CFCTX_ENV" tdc
     [ "$status" -eq 0 ]
     [[ "$output" == *'export CF_AUTH_MODE=client'* ]]
     [[ "$output" == *'export CF_UAA_CLIENT_ID=cfctx-bot'* ]]
