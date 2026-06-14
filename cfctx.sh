@@ -2241,6 +2241,8 @@ cfctx $CFCTX_VERSION — per-shell CF CLI / Tanzu context switcher
   cfctx pick            Open fzf to fuzzy-pick a foundation interactively.
   cfctx uaa-login [--om]  Target a UAA via uaac and fetch a token. Default
                           targets CF UAA; --om targets OpsMan UAA.
+  cfctx auth <name> [mode]  Show/set CF auth mode (auto|sso|client|password)
+  cfctx sso [<name>]    Force interactive CF SSO passcode login
   cfctx status          Show current context details (CF_HOME + cf target).
   cfctx ls              List all contexts (* marks current, [env] = has env file)
   cfctx rm <name>       Delete a context (prompts for confirmation)

@@ -102,6 +102,11 @@ Introduce `cfctx bosh-env` as a wrapper for `eval "$(om ... bosh-env)"` that wri
 
 The env-file approach must handle secrets carefully: the files sit on disk under `~/.cf-homes/<name>/` with `0600` perms, and the docs should call out that users with stricter posture should store secrets in macOS Keychain / `pass` / CredHub and have `context.env` shell out to retrieve them.
 
+- **SSO auth (shipped):** per-context `CF_AUTH_MODE` with actor-aware dispatch —
+  human `cf login --sso` passcode + automation `client_credentials`. See
+  `docs/tanzu-integration.md` and the design spec
+  `docs/superpowers/specs/2026-06-14-sso-auth-design.md`.
+
 ### v0.5 — Safety Rails
 
 Add a `cfctx lock` command that marks the current context read-only; subsequent `cf` commands that would mutate state (`delete-*`, `unbind-*`, `stop`, `restart`, `push` with certain flags) prompt for confirmation. Implement as a `cf` wrapper function that's optional and opt-in.
