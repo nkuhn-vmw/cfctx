@@ -1190,6 +1190,18 @@ _cfctx_token_humanize() {
 # Decide whether a human or automation is driving this switch. Used to pick
 # the CF login flow (interactive SSO passcode vs client_credentials).
 #   CFCTX_FORCE_ACTOR  — test/override hook; echoed verbatim if set.
+# Interactive CF SSO login: print the one-time passcode URL, then hand off to
+# `cf login --sso` (which prompts for the passcode). Assumes `cf api` already
+# ran and CF_API is set. Returns cf's exit status.
+_cfctx_cf_sso_login() {
+    local passcode_url="${UAA_URL:-$CF_API}/passcode"
+    echo "  cf: SSO login — get a one-time passcode at:"
+    printf '    '
+    _cfctx_osc8_link "$passcode_url" "$passcode_url"
+    echo
+    cf login --sso
+}
+
 _cfctx_actor() {
     if [[ -n "${CFCTX_FORCE_ACTOR:-}" ]]; then
         printf '%s' "$CFCTX_FORCE_ACTOR"; return 0
@@ -1281,16 +1293,43 @@ _cfctx_auto_login() {
             return 0
         fi
 
-        if [[ -z "$user" || -z "$pass" ]]; then
-            echo "  cf api set, but no CF_USERNAME/CF_PASSWORD (or OM_* fallback) — run 'cf login'"
-            return 0
-        fi
-
-        if ! cf auth "$user" "$pass" >/dev/null 2>&1; then
-            echo "  cf auth failed — verify CF_USERNAME/CF_PASSWORD in context.env" >&2
-            echo "  (OM_USERNAME/OM_PASSWORD fallback may not be a valid CF UAA identity)" >&2
-            return 0
-        fi
+        local eff_mode; eff_mode=$(_cfctx_resolve_cf_auth_mode)
+        case "$eff_mode" in
+            client)
+                if [[ -z "${CF_UAA_CLIENT_ID:-}" || -z "${CF_UAA_CLIENT_SECRET:-}" ]]; then
+                    echo "  cf: CF_AUTH_MODE=client but CF_UAA_CLIENT_ID/SECRET unset — set them in context.env" >&2
+                    return 0
+                fi
+                echo "  cf: client_credentials login as '$CF_UAA_CLIENT_ID'"
+                if ! cf auth "$CF_UAA_CLIENT_ID" "$CF_UAA_CLIENT_SECRET" --client-credentials >/dev/null 2>&1; then
+                    echo "  cf auth (client_credentials) failed — verify CF_UAA_CLIENT_ID/SECRET" >&2
+                    return 0
+                fi
+                ;;
+            sso)
+                if [[ "$(_cfctx_actor)" == "automation" ]]; then
+                    local _n; _n=$(basename "$ctx_dir")
+                    echo "  cf: '$_n' is SSO-only and this is non-interactive." >&2
+                    echo "      Run 'cfctx sso $_n' from a terminal, or set CF_UAA_CLIENT_ID for automation." >&2
+                    return 0
+                fi
+                if ! _cfctx_cf_sso_login; then
+                    echo "  cf login --sso failed" >&2
+                    return 0
+                fi
+                ;;
+            *)  # password (legacy)
+                if [[ -z "$user" || -z "$pass" ]]; then
+                    echo "  cf api set, but no CF_USERNAME/CF_PASSWORD (or OM_* fallback) — run 'cf login'"
+                    return 0
+                fi
+                if ! cf auth "$user" "$pass" >/dev/null 2>&1; then
+                    echo "  cf auth failed — verify CF_USERNAME/CF_PASSWORD in context.env" >&2
+                    echo "  (OM_USERNAME/OM_PASSWORD fallback may not be a valid CF UAA identity)" >&2
+                    return 0
+                fi
+                ;;
+        esac
     fi
 
     # Apply CF_ORG / CF_SPACE if they're set in env and differ from current.
