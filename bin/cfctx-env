@@ -94,8 +94,11 @@ case "$1" in
         case "${CF_SKIP_SSL_VALIDATION:-${OM_SKIP_SSL_VALIDATION:-}}" in
             true|yes|1|True|TRUE) skip="--skip-ssl-validation" ;;
         esac
+        if [[ -z "${CF_API:-}" ]]; then
+            echo "cfctx-env --login: CF_API unset for '$login_name'" >&2; exit 1
+        fi
         # shellcheck disable=SC2086
-        cf api "${CF_API:?cfctx-env --login: CF_API unset}" $skip >/dev/null 2>&1 \
+        cf api "$CF_API" $skip >/dev/null 2>&1 \
             || { echo "cfctx-env --login: cf api failed for $CF_API" >&2; exit 1; }
         if cf auth "$CF_UAA_CLIENT_ID" "$CF_UAA_CLIENT_SECRET" --client-credentials >/dev/null 2>&1; then
             echo "cfctx-env --login: refreshed CF token for '$login_name' (client_credentials)" >&2

@@ -207,4 +207,5 @@ EOF
     run "$CFCTX_ENV" --login dev
     [ "$status" -ne 0 ]
     [[ "$output" == *"not client-capable"* ]]
+    [[ "$output" != *"command not found"* ]]
 }
