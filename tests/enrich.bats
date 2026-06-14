@@ -93,11 +93,16 @@ MOCKOM
     chmod +x "$bindir/om"
 
     # Mock curl — the CF_SSO_CAPABLE probe shells out to `curl` against the CF
-    # UAA /login endpoint. Fail fast & non-zero so the probe never touches the
-    # network (real host is non-routable in tests); the `|| true` in the probe
-    # then yields empty → CF_SSO_CAPABLE=0.
+    # UAA /login endpoint. By default fail fast & non-zero so the probe never
+    # touches the network (real host is non-routable in tests); the `|| true` in
+    # the probe then yields empty → CF_SSO_CAPABLE=0. Tests that want to exercise
+    # the detection path set CFCTX_MOCK_CURL_BODY to a canned /login JSON body.
     cat > "$bindir/curl" <<'MOCKCURL'
 #!/usr/bin/env bash
+if [[ -n "${CFCTX_MOCK_CURL_BODY:-}" ]]; then
+    printf '%s' "$CFCTX_MOCK_CURL_BODY"
+    exit 0
+fi
 exit 1
 MOCKCURL
     chmod +x "$bindir/curl"
@@ -384,4 +389,36 @@ EOF
     # No human password persisted under SSO.
     ! grep -q '^export CF_PASSWORD=' "$CFCTX_ROOT/tdc/context.env"
     [[ "$output" == *"SSO mode — skipping CF admin password scrape"* ]]
+}
+
+@test "enrich seeds CF_SSO_CAPABLE=1 when UAA /login advertises an external IdP" {
+    if ! command -v jq >/dev/null 2>&1; then skip "jq needed"; fi
+    export CFCTX_MOCK_CURL_BODY='{"links":{"login":"/login","uaa":"https://uaa","passwd":"/forgot"},"prompts":{"username":["text","Email"],"password":["password","Password"]},"idpDefinitions":{"okta":"https://uaa/saml/discovery?returnIDParam=idp&idp=okta"}}'
+    local om_file="$BATS_TEST_TMPDIR/tdc.yml"
+    cat > "$om_file" <<'EOF'
+target: https://opsmgr.tdc.example.com
+username: admin
+password: pw
+EOF
+    cfctx tdc --from-om "$om_file" --no-login
+
+    run cfctx enrich tdc
+    [ "$status" -eq 0 ]
+    grep -q 'CF_SSO_CAPABLE="1"' "$CFCTX_ROOT/tdc/context.env"
+}
+
+@test "enrich seeds CF_SSO_CAPABLE=0 for a vanilla UAA /login response" {
+    if ! command -v jq >/dev/null 2>&1; then skip "jq needed"; fi
+    export CFCTX_MOCK_CURL_BODY='{"links":{"login":"/login","uaa":"https://uaa","passwd":"/forgot"},"prompts":{"username":["text","Email"],"password":["password","Password"]},"idpDefinitions":{}}'
+    local om_file="$BATS_TEST_TMPDIR/tdc.yml"
+    cat > "$om_file" <<'EOF'
+target: https://opsmgr.tdc.example.com
+username: admin
+password: pw
+EOF
+    cfctx tdc --from-om "$om_file" --no-login
+
+    run cfctx enrich tdc
+    [ "$status" -eq 0 ]
+    grep -q 'CF_SSO_CAPABLE="0"' "$CFCTX_ROOT/tdc/context.env"
 }

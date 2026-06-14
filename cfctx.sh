@@ -1052,19 +1052,35 @@ _cfctx_enrich_from_om() {
     echo "    ✓ UAA_URL set to https://uaa.$system_domain (CF UAA)"
 
     # Seed CF_SSO_CAPABLE once: does the CF UAA front an external IdP? Probe the
-    # UAA /login JSON for SAML/OIDC provider links. Best-effort; default 0.
+    # UAA /login JSON. Best-effort; default 0. Detection signal = a NON-EMPTY
+    # `idpDefinitions` object (external SAML/OIDC providers appear as keys there),
+    # or a `saml` prompt — NOT the `links`/`prompts` that every vanilla UAA returns.
     if command -v curl >/dev/null 2>&1; then
-        local _login_json _skip=""
+        local _login_json _skip="" _capable=0
         case "${CF_SKIP_SSL_VALIDATION:-${OM_SKIP_SSL_VALIDATION:-}}" in
             true|yes|1|True|TRUE) _skip="-k" ;;
         esac
+        # shellcheck disable=SC2086  # intentional word-split on _skip
         _login_json=$(curl -fsS --max-time 5 $_skip -H 'Accept: application/json' "https://uaa.$system_domain/login" 2>/dev/null || true)
-        if printf '%s' "$_login_json" | grep -qiE '"(saml|oauth|oidc)"|idpDefinitions|"links".*"login"'; then
+        if [[ -n "$_login_json" ]]; then
+            if command -v jq >/dev/null 2>&1; then
+                if printf '%s' "$_login_json" | jq -e '((.idpDefinitions // {}) | length) > 0 or ((.prompts // {}) | has("saml"))' >/dev/null 2>&1; then
+                    _capable=1
+                fi
+            else
+                # No jq: a non-empty idpDefinitions object has a quote (a key)
+                # immediately after its opening brace once whitespace is stripped.
+                if printf '%s' "$_login_json" | tr -d ' \n' | grep -q '"idpDefinitions":{"'; then
+                    _capable=1
+                fi
+            fi
+        fi
+        if [[ "$_capable" == "1" ]]; then
             _cfctx_set_env_var "$env_file" "CF_SSO_CAPABLE" "1"
             echo "    ✓ CF_SSO_CAPABLE=1 (external IdP detected on CF UAA)"
         else
             _cfctx_set_env_var "$env_file" "CF_SSO_CAPABLE" "0"
-            echo "    ✓ CF_SSO_CAPABLE=0 (no external IdP detected)"
+            echo "    (CF_SSO_CAPABLE=0 — no external IdP detected on CF UAA)"
         fi
     fi
 
