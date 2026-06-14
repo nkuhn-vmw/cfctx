@@ -165,3 +165,46 @@ EOF
     [[ "$output" == *'export CF_UAA_CLIENT_SECRET=s3cr3t'* ]]
     [[ "$output" == *'export CF_SSO_CAPABLE=1'* ]]
 }
+
+@test "cfctx-env --login does client_credentials auth and refreshes token" {
+    local bindir="$BATS_TEST_TMPDIR/bin"; mkdir -p "$bindir"
+    cat > "$bindir/cf" <<'MOCKCF'
+#!/usr/bin/env bash
+: "${CF_HOME:=$HOME}"; mkdir -p "$CF_HOME/.cf"; cfg="$CF_HOME/.cf/config.json"
+log="${CFCTX_MOCK_CF_LOG:-/tmp/cf-mock.log}"; printf '%s\n' "$*" >> "$log"
+case "$1" in
+    api)  printf '{"Target":"%s","AccessToken":""}\n' "$2" > "$cfg" ;;
+    auth) printf '{"Target":"x","AccessToken":"bearer fake-token"}\n' > "$cfg" ;;
+    *) exit 0 ;;
+esac
+MOCKCF
+    chmod +x "$bindir/cf"
+    export PATH="$bindir:$PATH"
+    export CFCTX_MOCK_CF_LOG="$BATS_TEST_TMPDIR/cf.log"; : > "$CFCTX_MOCK_CF_LOG"
+
+    mkdir -p "$CFCTX_ROOT/bot"
+    cat > "$CFCTX_ROOT/bot/context.env" <<'EOF'
+export CF_API="https://api.sys.x.example.com"
+export CF_AUTH_MODE="client"
+export CF_UAA_CLIENT_ID="cfctx-bot"
+export CF_UAA_CLIENT_SECRET="s3cr3t"
+EOF
+    chmod 600 "$CFCTX_ROOT/bot/context.env"
+
+    run "$CFCTX_ENV" --login bot
+    [ "$status" -eq 0 ]
+    grep -q '^auth cfctx-bot s3cr3t --client-credentials' "$CFCTX_MOCK_CF_LOG"
+    grep -q 'fake-token' "$CFCTX_ROOT/bot/.cf/config.json"
+}
+
+@test "cfctx-env --login errors clearly when context is not client-capable" {
+    mkdir -p "$CFCTX_ROOT/dev"
+    cat > "$CFCTX_ROOT/dev/context.env" <<'EOF'
+export CF_API="https://api.sys.x.example.com"
+export CF_AUTH_MODE="sso"
+EOF
+    chmod 600 "$CFCTX_ROOT/dev/context.env"
+    run "$CFCTX_ENV" --login dev
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not client-capable"* ]]
+}
