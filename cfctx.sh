@@ -1211,6 +1211,7 @@ _cfctx_resolve_cf_auth_mode() {
     local mode="${CF_AUTH_MODE:-auto}"
     case "$mode" in
         sso|client|password) printf '%s' "$mode"; return 0 ;;
+        # Unrecognized values fall through to auto resolution intentionally.
     esac
     local actor; actor=$(_cfctx_actor)
     if [[ "$actor" == "automation" && -n "${CF_UAA_CLIENT_ID:-}" ]]; then
