@@ -147,3 +147,21 @@ EOF
     ")
     [ "$output" = "$CFCTX_ROOT/tdc|https://api.example.com|system|10.0.0.10" ]
 }
+
+@test "cfctx-env forwards CF_AUTH_MODE and CF_UAA_CLIENT_* exports" {
+    mkdir -p "$CFCTX_ROOT/tdc"
+    cat > "$CFCTX_ROOT/tdc/context.env" <<'EOF'
+export CF_API="https://api.sys.tdc.example.com"
+export CF_AUTH_MODE="client"
+export CF_UAA_CLIENT_ID="cfctx-bot"
+export CF_UAA_CLIENT_SECRET="s3cr3t"
+export CF_SSO_CAPABLE="1"
+EOF
+    chmod 600 "$CFCTX_ROOT/tdc/context.env"
+    run "$BATS_TEST_DIRNAME/../bin/cfctx-env" tdc
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'export CF_AUTH_MODE=client'* ]]
+    [[ "$output" == *'export CF_UAA_CLIENT_ID=cfctx-bot'* ]]
+    [[ "$output" == *'export CF_UAA_CLIENT_SECRET=s3cr3t'* ]]
+    [[ "$output" == *'export CF_SSO_CAPABLE=1'* ]]
+}

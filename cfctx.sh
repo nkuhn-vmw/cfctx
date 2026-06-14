@@ -107,7 +107,8 @@ cfctx() {
             ;;
 
         clear|unset)
-            unset CF_HOME CF_API CF_ORG CF_SPACE CF_USERNAME CF_PASSWORD
+            unset CF_HOME CF_API CF_ORG CF_SPACE CF_USERNAME CF_PASSWORD \
+                  CF_AUTH_MODE CF_UAA_CLIENT_ID CF_UAA_CLIENT_SECRET CF_SSO_CAPABLE
             # Best-effort: clear common Tanzu env vars we may have sourced.
             unset OM_TARGET OM_USERNAME OM_PASSWORD OM_CLIENT_ID OM_CLIENT_SECRET OM_SKIP_SSL_VALIDATION \
                   OM_DECRYPTION_PASSPHRASE OM_CONNECT_TIMEOUT OM_REQUEST_TIMEOUT OM_TRACE OM_VARS_ENV OM_CA_CERT \
