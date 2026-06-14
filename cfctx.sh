@@ -1003,8 +1003,14 @@ _cfctx_enrich_from_om() {
     _cfctx_set_env_var "$env_file" "CF_API" "$cf_api"
     echo "    ✓ CF_API set to $cf_api"
 
-    # 3) CF admin user credentials (distinct from OM admin — they live in
-    # the cf product's own UAA). Required for `cf auth` to succeed.
+    # 3) CF admin user credentials — SKIP under SSO/client auth (no human
+    # password should land on disk) or when a CF service client is configured.
+    local _auth_mode _cf_client
+    _auth_mode=$(_cfctx_read_env_var "$env_file" CF_AUTH_MODE)
+    _cf_client=$(_cfctx_read_env_var "$env_file" CF_UAA_CLIENT_ID)
+    if [[ "$_auth_mode" == "sso" || "$_auth_mode" == "client" || -n "$_cf_client" ]]; then
+        echo "    (CF_AUTH_MODE=${_auth_mode:-auto} / client set — SSO mode — skipping CF admin password scrape)"
+    else
     local cf_creds cf_user cf_pass
     stderr_file=$(mktemp)
     rc=0
@@ -1024,6 +1030,7 @@ _cfctx_enrich_from_om() {
         [[ -s "$stderr_file" ]] && sed 's/^/      om: /' "$stderr_file"
     fi
     rm -f "$stderr_file"
+    fi
 
     # 4) Default CF_ORG / CF_SPACE = system — only if the user hasn't set them.
     # Change later with: cfctx tdc --org foo --space bar  (or cfctx edit tdc)
@@ -1043,6 +1050,23 @@ _cfctx_enrich_from_om() {
     _cfctx_set_env_var "$env_file" "UAA_URL" "https://uaa.$system_domain"
     _cfctx_set_env_var "$env_file" "UAA_ADMIN_CLIENT" "admin"
     echo "    ✓ UAA_URL set to https://uaa.$system_domain (CF UAA)"
+
+    # Seed CF_SSO_CAPABLE once: does the CF UAA front an external IdP? Probe the
+    # UAA /login JSON for SAML/OIDC provider links. Best-effort; default 0.
+    if command -v curl >/dev/null 2>&1; then
+        local _login_json _skip=""
+        case "${CF_SKIP_SSL_VALIDATION:-${OM_SKIP_SSL_VALIDATION:-}}" in
+            true|yes|1|True|TRUE) _skip="-k" ;;
+        esac
+        _login_json=$(curl -fsS --max-time 5 $_skip -H 'Accept: application/json' "https://uaa.$system_domain/login" 2>/dev/null || true)
+        if printf '%s' "$_login_json" | grep -qiE '"(saml|oauth|oidc)"|idpDefinitions|"links".*"login"'; then
+            _cfctx_set_env_var "$env_file" "CF_SSO_CAPABLE" "1"
+            echo "    ✓ CF_SSO_CAPABLE=1 (external IdP detected on CF UAA)"
+        else
+            _cfctx_set_env_var "$env_file" "CF_SSO_CAPABLE" "0"
+            echo "    ✓ CF_SSO_CAPABLE=0 (no external IdP detected)"
+        fi
+    fi
 
     # OM UAA URL — derive from OM_TARGET (already in context.env via yaml import).
     local om_target_for_uaa
