@@ -91,6 +91,16 @@ cfctx() {
             _cfctx_cmd_uaa_login "$@"
             ;;
 
+        auth)
+            shift
+            _cfctx_cmd_auth "$CFCTX_ROOT" "$@"
+            ;;
+
+        sso)
+            shift
+            _cfctx_cmd_sso "$CFCTX_ROOT" "$@"
+            ;;
+
         doctor)
             shift
             _cfctx_cmd_doctor "$CFCTX_ROOT" "$@"
@@ -107,7 +117,8 @@ cfctx() {
             ;;
 
         clear|unset)
-            unset CF_HOME CF_API CF_ORG CF_SPACE CF_USERNAME CF_PASSWORD
+            unset CF_HOME CF_API CF_ORG CF_SPACE CF_USERNAME CF_PASSWORD \
+                  CF_AUTH_MODE CF_UAA_CLIENT_ID CF_UAA_CLIENT_SECRET CF_SSO_CAPABLE
             # Best-effort: clear common Tanzu env vars we may have sourced.
             unset OM_TARGET OM_USERNAME OM_PASSWORD OM_CLIENT_ID OM_CLIENT_SECRET OM_SKIP_SSL_VALIDATION \
                   OM_DECRYPTION_PASSPHRASE OM_CONNECT_TIMEOUT OM_REQUEST_TIMEOUT OM_TRACE OM_VARS_ENV OM_CA_CERT \
@@ -928,6 +939,26 @@ _cfctx_enrich_from_om() {
         return 0
     fi
 
+    # Preflight: OpsMan SSO with no client configured → upcoming om calls fail
+    # with an opaque token error. Detect via the UAA /login probe and guide.
+    if [[ -z "$(_cfctx_read_env_var "$env_file" OM_CLIENT_ID)" ]] \
+       && ! grep -qE '^client-id:' "$om_file" 2>/dev/null; then
+        local _pf_uaa _pf_skip
+        _pf_uaa=$(_cfctx_read_env_var "$env_file" OM_UAA_URL)
+        if [[ -z "$_pf_uaa" ]]; then
+            local _pf_t; _pf_t=$(_cfctx_read_env_var "$env_file" OM_TARGET)
+            [[ -n "$_pf_t" ]] && _pf_uaa="${_pf_t%/}/uaa"
+        fi
+        if [[ -n "$_pf_uaa" ]]; then
+            _pf_skip=$(_cfctx_read_env_var "$env_file" OM_SKIP_SSL_VALIDATION)
+            if [[ "$(_cfctx_uaa_password_login_enabled "$_pf_uaa" "$_pf_skip")" == "disabled" ]]; then
+                echo "  ! OpsMan UAA password login is disabled (SSO) and no OM client is configured." >&2
+                echo "    om/bosh auth will fail — set client-id/client-secret in $om_file" >&2
+                echo "    (or OM_CLIENT_ID/OM_CLIENT_SECRET in the context), then re-run enrich." >&2
+            fi
+        fi
+    fi
+
     # Surface which OM we're actually querying — helps diagnose if a yaml
     # silently points at the wrong foundation.
     local om_target
@@ -1002,8 +1033,14 @@ _cfctx_enrich_from_om() {
     _cfctx_set_env_var "$env_file" "CF_API" "$cf_api"
     echo "    ✓ CF_API set to $cf_api"
 
-    # 3) CF admin user credentials (distinct from OM admin — they live in
-    # the cf product's own UAA). Required for `cf auth` to succeed.
+    # 3) CF admin user credentials — SKIP under SSO/client auth (no human
+    # password should land on disk) or when a CF service client is configured.
+    local _auth_mode _cf_client
+    _auth_mode=$(_cfctx_read_env_var "$env_file" CF_AUTH_MODE)
+    _cf_client=$(_cfctx_read_env_var "$env_file" CF_UAA_CLIENT_ID)
+    if [[ "$_auth_mode" == "sso" || "$_auth_mode" == "client" || -n "$_cf_client" ]]; then
+        echo "    (CF_AUTH_MODE=${_auth_mode:-auto}, SSO/client auth — skipping CF admin password scrape)"
+    else
     local cf_creds cf_user cf_pass
     stderr_file=$(mktemp)
     rc=0
@@ -1023,6 +1060,7 @@ _cfctx_enrich_from_om() {
         [[ -s "$stderr_file" ]] && sed 's/^/      om: /' "$stderr_file"
     fi
     rm -f "$stderr_file"
+    fi
 
     # 4) Default CF_ORG / CF_SPACE = system — only if the user hasn't set them.
     # Change later with: cfctx tdc --org foo --space bar  (or cfctx edit tdc)
@@ -1042,6 +1080,39 @@ _cfctx_enrich_from_om() {
     _cfctx_set_env_var "$env_file" "UAA_URL" "https://uaa.$system_domain"
     _cfctx_set_env_var "$env_file" "UAA_ADMIN_CLIENT" "admin"
     echo "    ✓ UAA_URL set to https://uaa.$system_domain (CF UAA)"
+
+    # Seed CF_SSO_CAPABLE once: does the CF UAA front an external IdP? Probe the
+    # UAA /login JSON. Best-effort; default 0. Detection signal = a NON-EMPTY
+    # `idpDefinitions` object (external SAML/OIDC providers appear as keys there),
+    # or a `saml` prompt — NOT the `links`/`prompts` that every vanilla UAA returns.
+    if command -v curl >/dev/null 2>&1; then
+        local _login_json _skip="" _capable=0
+        case "${CF_SKIP_SSL_VALIDATION:-${OM_SKIP_SSL_VALIDATION:-}}" in
+            true|yes|1|True|TRUE) _skip="-k" ;;
+        esac
+        # shellcheck disable=SC2086  # intentional word-split on _skip
+        _login_json=$(curl -fsS --max-time 5 $_skip -H 'Accept: application/json' "https://uaa.$system_domain/login" 2>/dev/null || true)
+        if [[ -n "$_login_json" ]]; then
+            if command -v jq >/dev/null 2>&1; then
+                if printf '%s' "$_login_json" | jq -e '((.idpDefinitions // {}) | length) > 0 or ((.prompts // {}) | has("saml"))' >/dev/null 2>&1; then
+                    _capable=1
+                fi
+            else
+                # No jq: a non-empty idpDefinitions object has a quote (a key)
+                # immediately after its opening brace once whitespace is stripped.
+                if printf '%s' "$_login_json" | tr -d ' \n' | grep -q '"idpDefinitions":{"'; then
+                    _capable=1
+                fi
+            fi
+        fi
+        if [[ "$_capable" == "1" ]]; then
+            _cfctx_set_env_var "$env_file" "CF_SSO_CAPABLE" "1"
+            echo "    ✓ CF_SSO_CAPABLE=1 (external IdP detected on CF UAA)"
+        else
+            _cfctx_set_env_var "$env_file" "CF_SSO_CAPABLE" "0"
+            echo "    (CF_SSO_CAPABLE=0 — no external IdP detected on CF UAA)"
+        fi
+    fi
 
     # OM UAA URL — derive from OM_TARGET (already in context.env via yaml import).
     local om_target_for_uaa
@@ -1186,6 +1257,57 @@ _cfctx_token_humanize() {
     fi
 }
 
+# Interactive CF SSO login: print the one-time passcode URL, then hand off to
+# `cf login --sso` (which prompts for the passcode). Assumes `cf api` already
+# ran and CF_API is set. Returns cf's exit status.
+_cfctx_cf_sso_login() {
+    local passcode_url="${UAA_URL:-$CF_API}/passcode"
+    echo "  cf: SSO login — get a one-time passcode at:"
+    printf '    '
+    _cfctx_osc8_link "$passcode_url" "$passcode_url"
+    echo
+    cf login --sso
+}
+
+# Decide whether a human or automation is driving this switch. Used to pick
+# the CF login flow (interactive SSO passcode vs client_credentials).
+#   CFCTX_FORCE_ACTOR  — test/override hook; echoed verbatim if set.
+_cfctx_actor() {
+    if [[ -n "${CFCTX_FORCE_ACTOR:-}" ]]; then
+        printf '%s' "$CFCTX_FORCE_ACTOR"; return 0
+    fi
+    if [[ "${CF_AUTH_MODE:-}" == "client" ]] \
+        || [[ -n "${CFCTX_NONINTERACTIVE:-}" ]] \
+        || [[ -n "${CI:-}" ]] \
+        || ! [ -t 0 ]; then
+        printf 'automation'
+    else
+        printf 'human'
+    fi
+}
+
+# Resolve the effective CF auth mode from CF_AUTH_MODE (default 'auto') and,
+# for 'auto', the actor + available credentials. Prints one of:
+#   client | sso | password
+_cfctx_resolve_cf_auth_mode() {
+    local mode="${CF_AUTH_MODE:-auto}"
+    case "$mode" in
+        sso|client|password) printf '%s' "$mode"; return 0 ;;
+        # Unrecognized values fall through to auto resolution intentionally.
+    esac
+    local actor; actor=$(_cfctx_actor)
+    # Loose on purpose: presence of a client id is enough to RESOLVE to client.
+    # The login path checks id+secret and degrades gracefully if the secret is
+    # missing — don't tighten this to also require the secret here.
+    if [[ "$actor" == "automation" && -n "${CF_UAA_CLIENT_ID:-}" ]]; then
+        printf 'client'
+    elif [[ "${CF_SSO_CAPABLE:-0}" == "1" ]]; then
+        printf 'sso'
+    else
+        printf 'password'
+    fi
+}
+
 # Auto-login to CF using CF_API + (CF_USERNAME or OM_USERNAME) +
 # (CF_PASSWORD or OM_PASSWORD). Called from _cfctx_cmd_switch after
 # context.env has been sourced. Silent if cf is not installed, CF_API
@@ -1244,16 +1366,43 @@ _cfctx_auto_login() {
             return 0
         fi
 
-        if [[ -z "$user" || -z "$pass" ]]; then
-            echo "  cf api set, but no CF_USERNAME/CF_PASSWORD (or OM_* fallback) — run 'cf login'"
-            return 0
-        fi
-
-        if ! cf auth "$user" "$pass" >/dev/null 2>&1; then
-            echo "  cf auth failed — verify CF_USERNAME/CF_PASSWORD in context.env" >&2
-            echo "  (OM_USERNAME/OM_PASSWORD fallback may not be a valid CF UAA identity)" >&2
-            return 0
-        fi
+        local eff_mode; eff_mode=$(_cfctx_resolve_cf_auth_mode)
+        case "$eff_mode" in
+            client)
+                if [[ -z "${CF_UAA_CLIENT_ID:-}" || -z "${CF_UAA_CLIENT_SECRET:-}" ]]; then
+                    echo "  cf: client_credentials auth selected but CF_UAA_CLIENT_ID/SECRET unset — set them in context.env" >&2
+                    return 0
+                fi
+                echo "  cf: client_credentials login as '$CF_UAA_CLIENT_ID'"
+                if ! cf auth "$CF_UAA_CLIENT_ID" "$CF_UAA_CLIENT_SECRET" --client-credentials >/dev/null 2>&1; then
+                    echo "  cf auth (client_credentials) failed — verify CF_UAA_CLIENT_ID/SECRET" >&2
+                    return 0
+                fi
+                ;;
+            sso)
+                if [[ "$(_cfctx_actor)" == "automation" ]]; then
+                    local _n; _n=$(basename "$ctx_dir")
+                    echo "  cf: '$_n' is SSO-only and this is non-interactive." >&2
+                    echo "      Run 'cfctx sso $_n' from a terminal, or set CF_UAA_CLIENT_ID for automation." >&2
+                    return 0
+                fi
+                if ! _cfctx_cf_sso_login; then
+                    echo "  cf login --sso failed" >&2
+                    return 0
+                fi
+                ;;
+            *)  # password (legacy)
+                if [[ -z "$user" || -z "$pass" ]]; then
+                    echo "  cf api set, but no CF_USERNAME/CF_PASSWORD (or OM_* fallback) — run 'cf login'"
+                    return 0
+                fi
+                if ! cf auth "$user" "$pass" >/dev/null 2>&1; then
+                    echo "  cf auth failed — verify CF_USERNAME/CF_PASSWORD in context.env" >&2
+                    echo "  (OM_USERNAME/OM_PASSWORD fallback may not be a valid CF UAA identity)" >&2
+                    return 0
+                fi
+                ;;
+        esac
     fi
 
     # Apply CF_ORG / CF_SPACE if they're set in env and differ from current.
@@ -1555,6 +1704,35 @@ _cfctx_confirm_new_blank() {
     esac
 }
 
+# Probe a UAA /login endpoint to see whether internal password login is enabled.
+# Echoes: enabled | disabled | unknown. "disabled" means the UAA only offers
+# external-IdP / passcode login (SSO) — om/bosh then need a client_credentials
+# client rather than username/password. Best-effort network call; never hangs.
+# Heuristic: keys off the login page's password prompt, not the token endpoint's
+# grant config — a rare UAA could show the prompt yet block the password grant.
+#   $1 = UAA base URL (trailing slash or /login optional)
+#   $2 = skip-ssl value (truthy => curl -k)
+_cfctx_uaa_password_login_enabled() {
+    local uaa_url="${1%/}" skip="${2:-}" curl_skip="" json
+    uaa_url="${uaa_url%/login}"
+    command -v curl >/dev/null 2>&1 || { printf 'unknown'; return 0; }
+    case "$skip" in true|yes|1|True|TRUE) curl_skip="-k" ;; esac
+    # shellcheck disable=SC2086  # intentional word-split on curl_skip
+    json=$(curl -fsS --max-time 5 $curl_skip -H 'Accept: application/json' "$uaa_url/login" 2>/dev/null || true)
+    [[ -n "$json" ]] || { printf 'unknown'; return 0; }
+    if command -v jq >/dev/null 2>&1; then
+        if printf '%s' "$json" | jq -e '(.prompts // {}) | has("password")' >/dev/null 2>&1; then
+            printf 'enabled'
+        else
+            printf 'disabled'
+        fi
+    elif printf '%s' "$json" | tr -d ' \n' | grep -q '"password":'; then
+        printf 'enabled'
+    else
+        printf 'disabled'
+    fi
+}
+
 # `cfctx doctor` — run a battery of diagnostic checks and print a report.
 # Default is fast (no network). Pass --online to probe Ops Manager reachability
 # for each context (slow but authoritative).
@@ -1616,6 +1794,49 @@ _cfctx_cmd_doctor() {
             esac
         fi
     done
+
+    # --- SSO / auth mode (active context) ---
+    if [[ -n "${CF_HOME:-}" && "$CF_HOME" != "$HOME" && -f "$CF_HOME/context.env" ]]; then
+        echo
+        echo "-- SSO / auth --"
+        local _amode _acid _acsec _acap _apass
+        _amode=$(_cfctx_read_env_var "$CF_HOME/context.env" CF_AUTH_MODE)
+        _acid=$(_cfctx_read_env_var "$CF_HOME/context.env" CF_UAA_CLIENT_ID)
+        _acsec=$(_cfctx_read_env_var "$CF_HOME/context.env" CF_UAA_CLIENT_SECRET)
+        _acap=$(_cfctx_read_env_var "$CF_HOME/context.env" CF_SSO_CAPABLE)
+        _apass=$(_cfctx_read_env_var "$CF_HOME/context.env" CF_PASSWORD)
+        echo "[${_tick}] CF_AUTH_MODE=${_amode:-auto}  CF_SSO_CAPABLE=${_acap:-0}"
+        if [[ "$_amode" == "client" && ( -z "$_acid" || -z "$_acsec" ) ]]; then
+            echo "[${_cross}] CF_AUTH_MODE=client but CF_UAA_CLIENT_ID/CF_UAA_CLIENT_SECRET incomplete"; issues=$((issues+1))
+        fi
+        if [[ "$_acap" == "1" && -n "$_apass" ]]; then
+            echo "[${_warn}] SSO-capable foundation still carries a legacy CF_PASSWORD — consider removing it"
+        fi
+        if (( online )); then
+            local _om_uaa _om_skip _om_cid _pwstate
+            _om_uaa=$(_cfctx_read_env_var "$CF_HOME/context.env" OM_UAA_URL)
+            if [[ -z "$_om_uaa" ]]; then
+                local _om_t; _om_t=$(_cfctx_read_env_var "$CF_HOME/context.env" OM_TARGET)
+                [[ -n "$_om_t" ]] && _om_uaa="${_om_t%/}/uaa"
+            fi
+            if [[ -n "$_om_uaa" ]]; then
+                _om_skip=$(_cfctx_read_env_var "$CF_HOME/context.env" OM_SKIP_SSL_VALIDATION)
+                _om_cid=$(_cfctx_read_env_var "$CF_HOME/context.env" OM_CLIENT_ID)
+                _pwstate=$(_cfctx_uaa_password_login_enabled "$_om_uaa" "$_om_skip")
+                case "$_pwstate" in
+                    disabled)
+                        if [[ -n "$_om_cid" ]]; then
+                            echo "[${_tick}] OpsMan UAA is SSO (password grant off); om/bosh use OM_CLIENT_ID=$_om_cid"
+                        else
+                            echo "[${_cross}] OpsMan UAA password login disabled (SSO) but OM_CLIENT_ID unset — om/bosh auth will fail. Configure a UAA client_credentials client."; issues=$((issues+1))
+                        fi
+                        ;;
+                    enabled)
+                        echo "[${_tick}] OpsMan UAA password login enabled" ;;
+                esac
+            fi
+        fi
+    fi
 
     # --- Terminal / TERM wrap status ---
     echo
@@ -2012,6 +2233,76 @@ EOF
     uaac context 2>/dev/null | sed 's/^/    /'
 }
 
+# `cfctx auth <name> [auto|sso|client|password]` — show or set a context's
+# CF auth mode. No mode arg → print current mode + CF_SSO_CAPABLE.
+_cfctx_cmd_auth() {
+    local root="$1" name="${2:-}" mode="${3:-}"
+    if [[ -z "$name" ]]; then
+        echo "Usage: cfctx auth <name> [auto|sso|client|password]" >&2
+        return 1
+    fi
+    _cfctx_valid_name "$name" || return 1
+    local env_file="$root/$name/context.env"
+    if [[ ! -f "$env_file" ]]; then
+        echo "No env file for '$name' — create with: cfctx init-env $name" >&2
+        return 1
+    fi
+    if [[ -z "$mode" ]]; then
+        local cur cap
+        cur=$(_cfctx_read_env_var "$env_file" CF_AUTH_MODE)
+        cap=$(_cfctx_read_env_var "$env_file" CF_SSO_CAPABLE)
+        echo "$name: CF_AUTH_MODE=${cur:-auto} CF_SSO_CAPABLE=${cap:-0}"
+        return 0
+    fi
+    case "$mode" in
+        auto|sso|client|password) ;;
+        *) echo "cfctx auth: invalid mode '$mode' (auto|sso|client|password)" >&2; return 1 ;;
+    esac
+    _cfctx_set_env_var "$env_file" "CF_AUTH_MODE" "$mode" || return 1
+    echo "$name: CF_AUTH_MODE set to $mode"
+}
+
+# `cfctx sso [<name>]` — force an interactive CF SSO passcode login for a
+# context, regardless of its stored CF_AUTH_MODE. Use when an automation
+# context's human owner needs to act as themselves.
+_cfctx_cmd_sso() {
+    local root="$1" name="${2:-}"
+    if [[ -z "$name" ]]; then
+        if [[ -n "${CF_HOME:-}" && "$CF_HOME" != "$HOME" ]]; then
+            name=$(basename "$CF_HOME")
+        else
+            echo "Usage: cfctx sso <name>" >&2
+            return 1
+        fi
+    fi
+    _cfctx_valid_name "$name" || return 1
+    local env_file="$root/$name/context.env"
+    [[ -f "$env_file" ]] || { echo "No env file for '$name'" >&2; return 1; }
+
+    # `cfctx sso <name>` switches the shell to the named context (exports
+    # CF_HOME so cf's token store lands in the per-context dir, sources its env)
+    # and forces an interactive `cf login --sso` regardless of the stored
+    # CF_AUTH_MODE. CF_HOME must be exported before any cf call — otherwise cf
+    # writes tokens to the caller's current config dir (wrong foundation).
+    export CF_HOME="$root/$name"
+    echo "→ $name    (CF_HOME=$CF_HOME)"
+
+    _cfctx_source_env "$env_file"
+    if [[ -z "${CF_API:-}" ]]; then
+        echo "cfctx sso: CF_API unset for '$name' — run 'cfctx $name' or 'cfctx enrich $name' first" >&2
+        return 1
+    fi
+    command -v cf >/dev/null 2>&1 || { echo "cfctx sso: cf not in PATH" >&2; return 1; }
+
+    local skip_ssl_flag=""
+    case "${CF_SKIP_SSL_VALIDATION:-${OM_SKIP_SSL_VALIDATION:-}}" in
+        true|yes|1|True|TRUE) skip_ssl_flag="--skip-ssl-validation" ;;
+    esac
+    # shellcheck disable=SC2086
+    cf api "$CF_API" $skip_ssl_flag >/dev/null 2>&1 || { echo "cfctx sso: cf api failed for $CF_API" >&2; return 1; }
+    _cfctx_cf_sso_login
+}
+
 _cfctx_cmd_help() {
     cat <<USAGE
 cfctx $CFCTX_VERSION — per-shell CF CLI / Tanzu context switcher
@@ -2026,6 +2317,8 @@ cfctx $CFCTX_VERSION — per-shell CF CLI / Tanzu context switcher
   cfctx pick            Open fzf to fuzzy-pick a foundation interactively.
   cfctx uaa-login [--om]  Target a UAA via uaac and fetch a token. Default
                           targets CF UAA; --om targets OpsMan UAA.
+  cfctx auth <name> [mode]  Show/set CF auth mode (auto|sso|client|password)
+  cfctx sso [<name>]    Force interactive CF SSO passcode login
   cfctx status          Show current context details (CF_HOME + cf target).
   cfctx ls              List all contexts (* marks current, [env] = has env file)
   cfctx rm <name>       Delete a context (prompts for confirmation)

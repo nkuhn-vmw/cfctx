@@ -157,3 +157,29 @@ The repo ships a `.gitignore` that excludes `*.env`, `context.env`, and
 git repo, and never `cp ~/.cf-homes/tdc/context.env` into a repo tree
 for "just a quick check". The template lives at
 `examples/context.env.example`; share that instead.
+
+## SSO foundations (external IdP)
+
+When a foundation's UAA is backed by an external IdP, cfctx auto-detects the
+right CF login flow per context and per actor:
+
+- **Humans on a terminal** get a one-time passcode flow: cfctx prints the
+  `<uaa>/passcode` URL and runs `cf login --sso`.
+- **CI / service accounts / agents** use a UAA *service client*
+  (`CF_UAA_CLIENT_ID` / `CF_UAA_CLIENT_SECRET`, `client_credentials` grant) —
+  never a prompt.
+
+`CF_AUTH_MODE` controls this per context: `auto` (default), `sso`, `client`,
+`password`. Inspect/set with `cfctx auth <name> [mode]`. Force a human passcode
+login on demand with `cfctx sso <name>`.
+
+`cfctx enrich` seeds `CF_SSO_CAPABLE` (probes the CF UAA `/login` for IdP
+links) and, for SSO/client foundations, **does not** scrape the CF admin
+password from Ops Manager — no human password lands on disk.
+
+OpsMan/BOSH ride on externally-provisioned UAA service clients
+(`OM_CLIENT_ID`/`OM_CLIENT_SECRET`, `BOSH_CLIENT`/`BOSH_CLIENT_SECRET`); cfctx
+consumes them and does no UAA client administration.
+
+For non-interactive shells, `cfctx-env --login <foundation>` performs a headless
+client_credentials login to refresh an expired token.

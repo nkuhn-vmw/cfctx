@@ -34,6 +34,7 @@ Usage:
   eval "$(cfctx-env <foundation>)"   # load env into the current shell
   cfctx-env <foundation>              # just print (for inspection)
   cfctx-env --list                    # list configured foundations
+  cfctx-env --login <foundation>      # headless client_credentials cf login (CI/agents)
   cfctx-env --help                    # this message
 
 Env:
@@ -64,6 +65,47 @@ case "$1" in
         # `find` rather than glob — works cleanly on empty dirs in zsh too.
         find "$root" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort
         exit 0
+        ;;
+    --login)
+        shift
+        login_name="${1:-}"
+        if [[ -z "$login_name" ]]; then
+            echo "cfctx-env --login: foundation name required" >&2; exit 1
+        fi
+        case "$login_name" in
+            -*|.*|*/*|*' '*|*$'\t'*) echo "cfctx-env: invalid foundation name '$login_name'" >&2; exit 1 ;;
+        esac
+        login_root="${CFCTX_ROOT:-$HOME/.cf-homes}"
+        login_ctx="$login_root/$login_name"
+        login_env="$login_ctx/context.env"
+        [[ -f "$login_env" ]] || { echo "cfctx-env --login: no context '$login_name' under $login_root" >&2; exit 1; }
+        set -a
+        # shellcheck disable=SC1090,SC1091
+        source "$login_env"
+        set +a
+        if [[ -z "${CF_UAA_CLIENT_ID:-}" || -z "${CF_UAA_CLIENT_SECRET:-}" ]]; then
+            echo "cfctx-env --login: context '$login_name' is not client-capable" >&2
+            echo "  (set CF_UAA_CLIENT_ID/CF_UAA_CLIENT_SECRET, or run 'cfctx $login_name' interactively)" >&2
+            exit 1
+        fi
+        command -v cf >/dev/null 2>&1 || { echo "cfctx-env --login: cf not in PATH" >&2; exit 1; }
+        export CF_HOME="$login_ctx"
+        skip=""
+        case "${CF_SKIP_SSL_VALIDATION:-${OM_SKIP_SSL_VALIDATION:-}}" in
+            true|yes|1|True|TRUE) skip="--skip-ssl-validation" ;;
+        esac
+        if [[ -z "${CF_API:-}" ]]; then
+            echo "cfctx-env --login: CF_API unset for '$login_name'" >&2; exit 1
+        fi
+        # shellcheck disable=SC2086
+        cf api "$CF_API" $skip >/dev/null 2>&1 \
+            || { echo "cfctx-env --login: cf api failed for $CF_API" >&2; exit 1; }
+        if cf auth "$CF_UAA_CLIENT_ID" "$CF_UAA_CLIENT_SECRET" --client-credentials >/dev/null 2>&1; then
+            echo "cfctx-env --login: refreshed CF token for '$login_name' (client_credentials)" >&2
+            exit 0
+        fi
+        echo "cfctx-env --login: cf auth (client_credentials) failed for '$login_name'" >&2
+        exit 1
         ;;
     -*)
         echo "cfctx-env: unknown flag '$1'" >&2
@@ -105,6 +147,7 @@ if [[ -f "$ctx/context.env" ]]; then
         # context.env (e.g. user's own helpers) is not exported via cfctx-env.
         for var in \
             CF_API CF_USERNAME CF_PASSWORD CF_ORG CF_SPACE \
+            CF_AUTH_MODE CF_UAA_CLIENT_ID CF_UAA_CLIENT_SECRET CF_SSO_CAPABLE \
             OM_TARGET OM_USERNAME OM_PASSWORD OM_CLIENT_ID OM_CLIENT_SECRET \
             OM_SKIP_SSL_VALIDATION OM_DECRYPTION_PASSPHRASE OM_CA_CERT \
             OM_CONNECT_TIMEOUT OM_REQUEST_TIMEOUT OM_TRACE OM_VARS_ENV \

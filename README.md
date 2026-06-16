@@ -312,6 +312,18 @@ cfctx uaa-login --om             # explicit: OpsMan UAA (uses OM_CLIENT_ID/SECRE
 `uaac` not installed? `gem install cf-uaac`. The subcommand prints a clear
 hint if it's missing.
 
+### SSO foundations
+
+```bash
+cfctx auth tdc client          # pin a context to UAA client_credentials (CI/agents)
+cfctx auth tdc                 # show current mode + SSO capability
+cfctx sso tdc                  # force a human passcode login (cf login --sso)
+cfctx-env --login tdc          # headless client_credentials refresh (non-interactive)
+```
+
+On SSO foundations cfctx never stores a human password; humans get a passcode
+flow and automation uses a UAA service client. See `docs/tanzu-integration.md`.
+
 ## Non-interactive shells (CI / Claude Code / scripts)
 
 `cfctx` is a sourced shell function — it has to mutate the parent

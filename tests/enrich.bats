@@ -91,6 +91,22 @@ JEOF
 esac
 MOCKOM
     chmod +x "$bindir/om"
+
+    # Mock curl — the CF_SSO_CAPABLE probe shells out to `curl` against the CF
+    # UAA /login endpoint. By default fail fast & non-zero so the probe never
+    # touches the network (real host is non-routable in tests); the `|| true` in
+    # the probe then yields empty → CF_SSO_CAPABLE=0. Tests that want to exercise
+    # the detection path set CFCTX_MOCK_CURL_BODY to a canned /login JSON body.
+    cat > "$bindir/curl" <<'MOCKCURL'
+#!/usr/bin/env bash
+if [[ -n "${CFCTX_MOCK_CURL_BODY:-}" ]]; then
+    printf '%s' "$CFCTX_MOCK_CURL_BODY"
+    exit 0
+fi
+exit 1
+MOCKCURL
+    chmod +x "$bindir/curl"
+
     export PATH="$bindir:/usr/bin:/bin"
 
     unset CF_HOME CF_API CFCTX_NO_AUTO_LOGIN CFCTX_NO_OM_ENRICH
@@ -349,4 +365,75 @@ EOF
     sed -i.bak '/BOSH-FROM-OM/,/END BOSH-FROM-OM/d' "$CFCTX_ROOT/tdc/context.env" 2>/dev/null || true
     cfctx enrich
     grep -q 'BOSH-FROM-OM' "$CFCTX_ROOT/tdc/context.env"
+}
+
+@test "enrich skips CF_USERNAME/CF_PASSWORD when CF_AUTH_MODE=sso" {
+    # Seed a context the normal way so the om-source marker is written and a
+    # subsequent `cfctx enrich` can re-query the same Ops Manager.
+    local om_file="$BATS_TEST_TMPDIR/tdc.yml"
+    cat > "$om_file" <<'EOF'
+target: https://opsmgr.tdc.example.com
+username: admin
+password: pw
+EOF
+    cfctx tdc --from-om "$om_file" --no-login
+
+    # Declare SSO mode and drop any password the initial scrape may have written.
+    cat >> "$CFCTX_ROOT/tdc/context.env" <<'EOF'
+export CF_AUTH_MODE="sso"
+EOF
+    sed -i.bak '/^export CF_PASSWORD=/d' "$CFCTX_ROOT/tdc/context.env"
+
+    run cfctx enrich tdc
+    [ "$status" -eq 0 ]
+    # No human password persisted under SSO.
+    ! grep -q '^export CF_PASSWORD=' "$CFCTX_ROOT/tdc/context.env"
+    [[ "$output" == *"SSO/client auth — skipping CF admin password scrape"* ]]
+}
+
+@test "enrich seeds CF_SSO_CAPABLE=1 when UAA /login advertises an external IdP" {
+    if ! command -v jq >/dev/null 2>&1; then skip "jq needed"; fi
+    export CFCTX_MOCK_CURL_BODY='{"links":{"login":"/login","uaa":"https://uaa","passwd":"/forgot"},"prompts":{"username":["text","Email"],"password":["password","Password"]},"idpDefinitions":{"okta":"https://uaa/saml/discovery?returnIDParam=idp&idp=okta"}}'
+    local om_file="$BATS_TEST_TMPDIR/tdc.yml"
+    cat > "$om_file" <<'EOF'
+target: https://opsmgr.tdc.example.com
+username: admin
+password: pw
+EOF
+    cfctx tdc --from-om "$om_file" --no-login
+
+    run cfctx enrich tdc
+    [ "$status" -eq 0 ]
+    grep -q 'CF_SSO_CAPABLE="1"' "$CFCTX_ROOT/tdc/context.env"
+}
+
+@test "enrich seeds CF_SSO_CAPABLE=0 for a vanilla UAA /login response" {
+    if ! command -v jq >/dev/null 2>&1; then skip "jq needed"; fi
+    export CFCTX_MOCK_CURL_BODY='{"links":{"login":"/login","uaa":"https://uaa","passwd":"/forgot"},"prompts":{"username":["text","Email"],"password":["password","Password"]},"idpDefinitions":{}}'
+    local om_file="$BATS_TEST_TMPDIR/tdc.yml"
+    cat > "$om_file" <<'EOF'
+target: https://opsmgr.tdc.example.com
+username: admin
+password: pw
+EOF
+    cfctx tdc --from-om "$om_file" --no-login
+
+    run cfctx enrich tdc
+    [ "$status" -eq 0 ]
+    grep -q 'CF_SSO_CAPABLE="0"' "$CFCTX_ROOT/tdc/context.env"
+}
+
+@test "enrich warns when OpsMan UAA is SSO but no OM client is configured" {
+    local om_file="$BATS_TEST_TMPDIR/cdc.yml"
+    cat > "$om_file" <<'EOF'
+target: https://cdc.example.com
+username: admin
+password: secret
+skip-ssl-validation: true
+EOF
+    cfctx target cdc --from-om "$om_file" --no-login >/dev/null 2>&1 || true
+    export CFCTX_MOCK_CURL_BODY='{"prompts":{"passcode":["password","One Time Code"]}}'
+    run cfctx enrich cdc
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OpsMan UAA password login is disabled (SSO) and no OM client is configured"* ]]
 }
