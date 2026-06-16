@@ -422,3 +422,17 @@ EOF
     [ "$status" -eq 0 ]
     grep -q 'CF_SSO_CAPABLE="0"' "$CFCTX_ROOT/tdc/context.env"
 }
+
+@test "enrich warns when OpsMan UAA is SSO but no OM client is configured" {
+    local om_file="$BATS_TEST_TMPDIR/cdc.yml"
+    cat > "$om_file" <<'EOF'
+target: https://cdc.example.com
+username: admin
+password: secret
+skip-ssl-validation: true
+EOF
+    cfctx target cdc --from-om "$om_file" --no-login >/dev/null 2>&1 || true
+    export CFCTX_MOCK_CURL_BODY='{"prompts":{"passcode":["password","One Time Code"]}}'
+    run cfctx enrich cdc
+    [[ "$output" == *"OpsMan UAA password login is disabled (SSO) and no OM client is configured"* ]]
+}

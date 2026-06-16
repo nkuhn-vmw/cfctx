@@ -939,6 +939,26 @@ _cfctx_enrich_from_om() {
         return 0
     fi
 
+    # Preflight: OpsMan SSO with no client configured → upcoming om calls fail
+    # with an opaque token error. Detect via the UAA /login probe and guide.
+    if [[ -z "$(_cfctx_read_env_var "$env_file" OM_CLIENT_ID)" ]] \
+       && ! { [[ -f "$om_file" ]] && grep -qE '^client-id:' "$om_file"; }; then
+        local _pf_uaa _pf_skip
+        _pf_uaa=$(_cfctx_read_env_var "$env_file" OM_UAA_URL)
+        if [[ -z "$_pf_uaa" ]]; then
+            local _pf_t; _pf_t=$(_cfctx_read_env_var "$env_file" OM_TARGET)
+            [[ -n "$_pf_t" ]] && _pf_uaa="${_pf_t%/}/uaa"
+        fi
+        if [[ -n "$_pf_uaa" ]]; then
+            _pf_skip=$(_cfctx_read_env_var "$env_file" OM_SKIP_SSL_VALIDATION)
+            if [[ "$(_cfctx_uaa_password_login_enabled "$_pf_uaa" "$_pf_skip")" == "disabled" ]]; then
+                echo "  ! OpsMan UAA password login is disabled (SSO) and no OM client is configured." >&2
+                echo "    om/bosh auth will fail — set client-id/client-secret in $om_file" >&2
+                echo "    (or OM_CLIENT_ID/OM_CLIENT_SECRET in the context), then re-run enrich." >&2
+            fi
+        fi
+    fi
+
     # Surface which OM we're actually querying — helps diagnose if a yaml
     # silently points at the wrong foundation.
     local om_target
@@ -1684,6 +1704,33 @@ _cfctx_confirm_new_blank() {
     esac
 }
 
+# Probe a UAA /login endpoint to see whether internal password login is enabled.
+# Echoes: enabled | disabled | unknown. "disabled" means the UAA only offers
+# external-IdP / passcode login (SSO) — om/bosh then need a client_credentials
+# client rather than username/password. Best-effort network call; never hangs.
+#   $1 = UAA base URL (trailing slash or /login optional)
+#   $2 = skip-ssl value (truthy => curl -k)
+_cfctx_uaa_password_login_enabled() {
+    local uaa_url="${1%/}" skip="${2:-}" curl_skip="" json
+    uaa_url="${uaa_url%/login}"
+    command -v curl >/dev/null 2>&1 || { printf 'unknown'; return 0; }
+    case "$skip" in true|yes|1|True|TRUE) curl_skip="-k" ;; esac
+    # shellcheck disable=SC2086  # intentional word-split on curl_skip
+    json=$(curl -fsS --max-time 5 $curl_skip -H 'Accept: application/json' "$uaa_url/login" 2>/dev/null || true)
+    [[ -n "$json" ]] || { printf 'unknown'; return 0; }
+    if command -v jq >/dev/null 2>&1; then
+        if printf '%s' "$json" | jq -e '(.prompts // {}) | has("password")' >/dev/null 2>&1; then
+            printf 'enabled'
+        else
+            printf 'disabled'
+        fi
+    elif printf '%s' "$json" | tr -d ' \n' | grep -q '"password":'; then
+        printf 'enabled'
+    else
+        printf 'disabled'
+    fi
+}
+
 # `cfctx doctor` — run a battery of diagnostic checks and print a report.
 # Default is fast (no network). Pass --online to probe Ops Manager reachability
 # for each context (slow but authoritative).
@@ -1762,6 +1809,30 @@ _cfctx_cmd_doctor() {
         fi
         if [[ "$_acap" == "1" && -n "$_apass" ]]; then
             echo "[${_warn}] SSO-capable foundation still carries a legacy CF_PASSWORD — consider removing it"
+        fi
+        if (( online )); then
+            local _om_uaa _om_skip _om_cid _pwstate
+            _om_uaa=$(_cfctx_read_env_var "$CF_HOME/context.env" OM_UAA_URL)
+            if [[ -z "$_om_uaa" ]]; then
+                local _om_t; _om_t=$(_cfctx_read_env_var "$CF_HOME/context.env" OM_TARGET)
+                [[ -n "$_om_t" ]] && _om_uaa="${_om_t%/}/uaa"
+            fi
+            if [[ -n "$_om_uaa" ]]; then
+                _om_skip=$(_cfctx_read_env_var "$CF_HOME/context.env" OM_SKIP_SSL_VALIDATION)
+                _om_cid=$(_cfctx_read_env_var "$CF_HOME/context.env" OM_CLIENT_ID)
+                _pwstate=$(_cfctx_uaa_password_login_enabled "$_om_uaa" "$_om_skip")
+                case "$_pwstate" in
+                    disabled)
+                        if [[ -n "$_om_cid" ]]; then
+                            echo "[${_tick}] OpsMan UAA is SSO (password grant off); om/bosh use OM_CLIENT_ID=$_om_cid"
+                        else
+                            echo "[${_cross}] OpsMan UAA password login disabled (SSO) but OM_CLIENT_ID unset — om/bosh auth will fail. Configure a UAA client_credentials client."; issues=$((issues+1))
+                        fi
+                        ;;
+                    enabled)
+                        echo "[${_tick}] OpsMan UAA password login enabled" ;;
+                esac
+            fi
         fi
     fi
 
