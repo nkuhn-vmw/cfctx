@@ -434,5 +434,6 @@ EOF
     cfctx target cdc --from-om "$om_file" --no-login >/dev/null 2>&1 || true
     export CFCTX_MOCK_CURL_BODY='{"prompts":{"passcode":["password","One Time Code"]}}'
     run cfctx enrich cdc
+    [ "$status" -eq 0 ]
     [[ "$output" == *"OpsMan UAA password login is disabled (SSO) and no OM client is configured"* ]]
 }

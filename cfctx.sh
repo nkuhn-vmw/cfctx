@@ -942,7 +942,7 @@ _cfctx_enrich_from_om() {
     # Preflight: OpsMan SSO with no client configured → upcoming om calls fail
     # with an opaque token error. Detect via the UAA /login probe and guide.
     if [[ -z "$(_cfctx_read_env_var "$env_file" OM_CLIENT_ID)" ]] \
-       && ! { [[ -f "$om_file" ]] && grep -qE '^client-id:' "$om_file"; }; then
+       && ! grep -qE '^client-id:' "$om_file" 2>/dev/null; then
         local _pf_uaa _pf_skip
         _pf_uaa=$(_cfctx_read_env_var "$env_file" OM_UAA_URL)
         if [[ -z "$_pf_uaa" ]]; then
@@ -1708,6 +1708,8 @@ _cfctx_confirm_new_blank() {
 # Echoes: enabled | disabled | unknown. "disabled" means the UAA only offers
 # external-IdP / passcode login (SSO) — om/bosh then need a client_credentials
 # client rather than username/password. Best-effort network call; never hangs.
+# Heuristic: keys off the login page's password prompt, not the token endpoint's
+# grant config — a rare UAA could show the prompt yet block the password grant.
 #   $1 = UAA base URL (trailing slash or /login optional)
 #   $2 = skip-ssl value (truthy => curl -k)
 _cfctx_uaa_password_login_enabled() {

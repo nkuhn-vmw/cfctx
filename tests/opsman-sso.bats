@@ -35,6 +35,7 @@ seed() {  # seed <name> <extra context.env lines...>
 @test "doctor --online flags OpsMan SSO with no OM_CLIENT_ID" {
     seed cdc 'export OM_TARGET="https://cdc.example.com"' 'export OM_SKIP_SSL_VALIDATION="true"'
     CFCTX_MOCK_CURL_BODY="$SSO_LOGIN" run cfctx doctor --online
+    [ "$status" -ne 0 ]
     [[ "$output" == *"OpsMan UAA password login disabled (SSO) but OM_CLIENT_ID unset"* ]]
 }
 
