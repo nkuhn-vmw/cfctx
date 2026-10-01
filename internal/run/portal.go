@@ -17,6 +17,10 @@ type Portal struct{ Context string }
 
 func CleanEnvironmentForPortal() []string {
 	env := CleanEnvironment(os.Environ())
+	// Preserve the operator-selected CLI configuration path, never an env token.
+	if config := os.Getenv("KLPORTAL_CONFIG"); config != "" {
+		env = append(env, "KLPORTAL_CONFIG="+config)
+	}
 	return env
 }
 func (p Portal) Resolve(ctx context.Context, s Selection) (Profile, error) {

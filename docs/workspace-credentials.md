@@ -36,7 +36,7 @@ placeholders with the portal's actual GUIDs):
     }
   },
   "credentialFields": ["CF_USERNAME", "CF_PASSWORD"],
-  "portalContext": "cdc"
+  "portalContext": "dev"
 }
 ```
 
@@ -59,8 +59,10 @@ separate upload authority is approved.
 
 ## Mac portal provider
 
-Sign into the reviewed portal CLI context using `klportal --ctx cdc auth login`
-(the portal's existing device SSO flow). Run:
+Sign into the reviewed portal CLI context using `klportal --ctx dev login`
+(the portal's existing device SSO flow). The stock CDC portal context is named
+`dev`; a CLI context name is independent of the foundation name. Existing
+`KLPORTAL_CONFIG` overrides are honored. Run:
 
 ```bash
 cfctx-run --provider portal --workspace my-workspace --foundation cdc \
