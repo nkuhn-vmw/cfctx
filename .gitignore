@@ -36,3 +36,7 @@ tests/bats/
 tests/.bats-tmp/
 /files.zip
 /cfctx-spec.md
+
+# Go companion build artifacts
+/build/
+/cfctx-run
