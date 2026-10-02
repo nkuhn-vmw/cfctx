@@ -110,6 +110,9 @@ and stderr pass through unchanged, so an explicitly requested command can still
 print its credentials. Agents with arbitrary shell/filesystem access can read
 credentials granted to them or modify a descriptor they own. Target-side roles
 and CredHub ACLs are the authorization boundaries; this helper is not a sandbox.
+The child's home directory stays unchanged. Isolation covers CF/BOSH token
+state and the listed environment variables; it does not isolate existing
+`om`, `credhub`, `uaac` or Kubernetes files in the user's home directory.
 
 Exit status follows the child (130 on cancellation). Profile/provider/setup
 failure prevents execution and returns a sanitized error. Rotation takes effect

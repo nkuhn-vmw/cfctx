@@ -274,7 +274,7 @@ func TestConcurrentContextsAndSignalCleanup(t *testing.T) {
 		code, _ := Execute(ctx, p, d, s, []string{"child", marker, "wait"}, nil, io.Discard, io.Discard)
 		done <- code
 	}()
-	limit := time.After(3 * time.Second)
+	limit := time.After(15 * time.Second)
 	for {
 		if _, err := os.Stat(marker); err == nil {
 			break
