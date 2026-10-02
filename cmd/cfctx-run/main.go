@@ -24,7 +24,7 @@ func mainRun() int {
 	}
 	flags := flag.NewFlagSet("cfctx-run", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	provider := flags.String("provider", "", "portal or mcp")
+	provider := flags.String("provider", "", "mcp (descriptor-backed hosted provider)")
 	workspace := flags.String("workspace", "", "workspace handle")
 	foundation := flags.String("foundation", "", "foundation name")
 	capability := flags.String("capability", "", "capability name")
@@ -56,22 +56,17 @@ func mainRun() int {
 		}
 		return runRequest(flags.Args())
 	}
+	if *provider != "mcp" {
+		fmt.Fprintln(os.Stderr, "cfctx-run: choose --provider mcp")
+		return 2
+	}
 	selection := run.Selection{Workspace: *workspace, Foundation: *foundation, Capability: *capability}
 	d, err := run.LoadDescriptor(*descriptor)
 	if err != nil || d.Validate(selection) != nil || len(flags.Args()) == 0 {
 		fmt.Fprintln(os.Stderr, "cfctx-run: invalid workspace descriptor, selection or command")
 		return 2
 	}
-	var source run.Provider
-	switch *provider {
-	case "portal":
-		source = run.Portal{Context: d.PortalContext}
-	case "mcp":
-		source = run.MCP{Endpoint: d.MCPEndpoint}
-	default:
-		fmt.Fprintln(os.Stderr, "cfctx-run: choose --provider portal or mcp")
-		return 2
-	}
+	source := run.MCP{Endpoint: d.MCPEndpoint}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	defer stop()
 	lookup, cancel := context.WithTimeout(ctx, 30*time.Second)

@@ -25,7 +25,7 @@ shell function. Hosted packaging should pin the helper binary checksum.
 
 The non-secret descriptor is supplied by trusted workspace provisioning. Review
 its exact targets before using it. Example CF-only descriptor (replace all
-placeholders with the portal's actual GUIDs):
+placeholders with the provisioned workspace's actual values):
 
 ```json
 {
@@ -41,18 +41,16 @@ placeholders with the portal's actual GUIDs):
       "spaceGuid": "22222222-2222-2222-2222-222222222222"
     }
   },
-  "credentialFields": ["CF_USERNAME", "CF_PASSWORD"],
-  "portalContext": "dev"
+  "credentialFields": ["CF_USERNAME", "CF_PASSWORD"]
 }
 ```
 
-Store a `json` secret at `<namespace>/config` through the portal's existing
-workspace secrets view or `klportal secret set` via stdin. The profile has the
-same `version`, `workspace`, `foundation`, `capability` and `targets`, plus a
-`credentials` object whose only keys are `CF_USERNAME` and `CF_PASSWORD`.
-Use a portal-managed UAA user with the actual workspace CF roles, not an admin.
-Do not include descriptor-only keys in the profile. Never commit the profile,
-echo it to the terminal or put the value in a command argument.
+The hosted MCP provider retrieves the `json` secret at `<namespace>/config`.
+The profile has the same `version`, `workspace`, `foundation`, `capability` and
+`targets`, plus a `credentials` object whose only keys are `CF_USERNAME` and
+`CF_PASSWORD`. Do not include descriptor-only keys in the profile. Never
+commit the profile, echo it to the terminal or put the value in a command
+argument.
 
 A combined CF/BOSH profile additionally has `targets.bosh` with `endpoint`
 (HTTPS), `directorUuid`, and `team`. Both descriptor and profile must match.
@@ -63,31 +61,20 @@ reduce the client's authority. Team admin also allows team-scoped deletion,
 lifecycle, SSH, logs and errands. Artifacts must already be uploaded unless
 separate upload authority is approved.
 
-## Mac portal provider
-
-Sign into the reviewed portal CLI context using `klportal --ctx dev login`
-(the portal's existing device SSO flow). The stock CDC portal context is named
-`dev`; a CLI context name is independent of the foundation name. Existing
-`KLPORTAL_CONFIG` overrides are honored. Run:
-
-```bash
-cfctx-run --provider portal --workspace my-workspace --foundation cdc \
-  --capability deploy --descriptor /path/to/descriptor.json -- cf apps
-```
-
-The helper captures `klportal --json secret get` internally and discards raw
-provider errors. It clears the `KLPORTAL_TOKEN` environment override so this
-path uses the configured human SSO context and CLI refresh behavior. It does
-not add a new token store or Mac Keychain integration.
-
 ## Hosted MCP provider
 
 Provision a scoped caller-mode CredHub MCP backend and brokered OAuth helper.
 At process startup, the buildpack must supply the actual ephemeral loopback URL
 as descriptor `mcpEndpoint`, e.g. `http://127.0.0.1:PORT/mcp`. The URL must match
-the bound helper, not an arbitrary HTTP listener. Use the same invocation with
-`--provider mcp`. Only literal loopback HTTP `/mcp` endpoints are accepted;
-proxy environment settings and redirects are disabled for helper traffic.
+the bound helper, not an arbitrary HTTP listener. Only literal loopback HTTP
+`/mcp` endpoints are accepted; proxy environment settings and redirects are
+disabled for helper traffic. Invoke it with the reviewed descriptor:
+
+```bash
+cfctx-run --provider mcp --workspace my-workspace --foundation cdc \
+  --capability deploy --descriptor /path/to/descriptor.json -- cf apps
+```
+
 The helper performs MCP initialize/initialized and `secret_get` without making
 the value a model-visible tool response. Stateless JSON and session/SSE are
 supported. Stale cached values and MCP errors are refused.
@@ -118,8 +105,8 @@ The request contains only `schema`, `targets.cf.{api,orgGuid,spaceGuid}`, and
 org and space GUID relationship, and the resulting TLS-enabled CF CLI target
 before launching the command. It accepts only fd 3, reads at most 65,536 bytes,
 and times out after 30 seconds if the producer does not close the pipe. This
-mode is CF-only; existing descriptor-backed portal and MCP invocations remain
-available for migration.
+mode is CF-only; descriptor-backed MCP invocations remain available while
+consumers migrate to request v1.
 
 ## Isolation and limits
 
@@ -128,7 +115,7 @@ selectors, endpoints or GUIDs, unknown credential fields, and NUL values fail
 closed. Passwords may contain shell characters: they remain literal environment
 values and are never sourced or evaluated.
 
-The helper removes inherited CF/BOSH/OM/UAA/CredHub/CFCTX/portal environment
+The helper removes inherited CF/BOSH/OM/UAA/CredHub/CFCTX/KLPORTAL environment
 variables and `VCAP_SERVICES` before platform setup. It creates a private
 temporary `CF_HOME` and BOSH config; CF login uses environment credentials,
 checks CAPI org/space relationships and the resulting exact CLI configuration,
@@ -168,5 +155,5 @@ bats tests/
 ```
 
 The Go integration fixtures exercise real subprocess/env/state handling and
-loopback MCP protocol. They prove local behavior, not CDC permissions, portal
-SSO or a deployed broker; those require the separate live acceptance run.
+loopback MCP protocol. They prove local behavior, not foundation permissions
+or a deployed broker; those require a separate live acceptance run.

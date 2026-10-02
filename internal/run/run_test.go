@@ -29,7 +29,7 @@ func fixture() (Profile, Descriptor, Selection) {
 	s := Selection{"demo", "cdc", "deploy"}
 	targets := Targets{CF: &CFTarget{"https://api.example.invalid", orgID, spaceID}}
 	p := Profile{1, s.Workspace, s.Foundation, s.Capability, targets, map[string]string{"CF_USERNAME": "fixture-user", "CF_PASSWORD": "fixture-$(touch unsafe)-password"}}
-	d := Descriptor{Version: 1, Workspace: s.Workspace, Foundation: s.Foundation, Capability: s.Capability, Namespace: "/kuhn-labs/ws/demo/contexts/cdc/deploy", Targets: targets, CredentialFields: []string{"CF_USERNAME", "CF_PASSWORD"}, PortalContext: "cdc"}
+	d := Descriptor{Version: 1, Workspace: s.Workspace, Foundation: s.Foundation, Capability: s.Capability, Namespace: "/kuhn-labs/ws/demo/contexts/cdc/deploy", Targets: targets, CredentialFields: []string{"CF_USERNAME", "CF_PASSWORD"}}
 	return p, d, s
 }
 func TestProfileValidation(t *testing.T) {
@@ -67,6 +67,12 @@ func TestProfileValidation(t *testing.T) {
 				t.Fatalf("unexpected validation for %s: %v", kind, err)
 			}
 		})
+	}
+}
+func TestRemovedPortalDescriptorFieldIsRejected(t *testing.T) {
+	var d Descriptor
+	if err := DecodeStrict([]byte(`{"portalContext":"dev"}`), &d); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("legacy portalContext field error = %v, want ErrInvalid", err)
 	}
 }
 func TestCleanEnvironment(t *testing.T) {
@@ -179,19 +185,6 @@ func TestCLIProcess(t *testing.T) {
 			id = orgID
 		}
 		fmt.Printf(`{"uuid":%q}`, id)
-	case "klportal":
-		if os.Getenv("KLPORTAL_TOKEN") != "" {
-			os.Exit(95)
-		}
-		if os.Getenv("FAIL_LOOKUP") == "1" {
-			fmt.Fprintln(os.Stderr, "SECRET ERROR BODY")
-			os.Exit(1)
-		}
-		p, _, s := fixture()
-		data, _ := json.Marshal(p)
-		path, _ := s.Path()
-		detail, _ := json.Marshal(map[string]any{"name": path, "type": "json", "value": string(data), "updatedAt": "now"})
-		fmt.Print(string(detail))
 	case "child":
 		if os.Getenv("CF_USERNAME") != "" || os.Getenv("CF_PASSWORD") != "" || os.Getenv("OM_PASSWORD") != "" || os.Getenv("CREDHUB_SECRET") != "" {
 			os.Exit(96)
@@ -271,7 +264,7 @@ func tools(t *testing.T) string {
 	}
 	t.Setenv("TEST_EXECUTABLE", exe)
 	t.Setenv("RUN_FIXTURE", "1")
-	for _, name := range []string{"cf", "bosh", "klportal", "child"} {
+	for _, name := range []string{"cf", "bosh", "child"} {
 		script := fmt.Sprintf("#!/bin/sh\nexec \"$TEST_EXECUTABLE\" -test.run=TestCLIProcess -- %s \"$@\"\n", name)
 		if err := os.WriteFile(filepath.Join(root, name), []byte(script), 0700); err != nil {
 			t.Fatal(err)
@@ -421,23 +414,6 @@ func TestExecuteDenialsDoNotRunChild(t *testing.T) {
 				t.Fatal("secret-bearing setup error exposed")
 			}
 		})
-	}
-}
-func TestPortalCapturesValueAndFailsClosedAfterSuccess(t *testing.T) {
-	tools(t)
-	t.Setenv("KLPORTAL_TOKEN", "admin-override")
-	_, d, s := fixture()
-	got, err := (Portal{Context: d.PortalContext}).Resolve(context.Background(), s)
-	if err != nil || Validate(got, d, s) != nil {
-		t.Fatal("portal profile failed")
-	}
-	t.Setenv("FAIL_LOOKUP", "1")
-	got, err = (Portal{Context: d.PortalContext}).Resolve(context.Background(), s)
-	if err == nil || got.Version != 0 {
-		t.Fatal("lookup fell back to previous profile")
-	}
-	if strings.Contains(err.Error(), "SECRET") {
-		t.Fatal("provider error disclosed raw body")
 	}
 }
 func TestConcurrentContextsAndSignalCleanup(t *testing.T) {

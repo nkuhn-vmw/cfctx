@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -19,13 +20,29 @@ func TestRequestFDOptionPresenceIsValidated(t *testing.T) {
 		{"cfctx-run", "--request-fd", "-1", "--", "/usr/bin/true"},
 		{"cfctx-run", "--contract", "--request-fd", "-1"},
 		{"cfctx-run", "--request-fd", "4", "--", "/usr/bin/true"},
-		{"cfctx-run", "--request-fd", "3", "--provider", "portal", "--", "/usr/bin/true"},
-		{"cfctx-run", "--contract", "--provider", "portal"},
 	} {
 		os.Args = args
 		if code := mainRun(); code != 2 {
 			t.Errorf("mainRun(%q) = %d, want 2", args, code)
 		}
+	}
+}
+
+func TestLegacyPortalProviderIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	descriptor := filepath.Join(dir, "descriptor.json")
+	const validLegacyDescriptor = `{"version":1,"workspace":"demo","foundation":"cdc","capability":"deploy","namespace":"/kuhn-labs/ws/demo/contexts/cdc/deploy","targets":{"cf":{"api":"https://api.example.invalid","orgGuid":"11111111-1111-1111-1111-111111111111","spaceGuid":"22222222-2222-2222-2222-222222222222"}},"credentialFields":["CF_USERNAME","CF_PASSWORD"],"portalContext":"dev"}`
+	if err := os.WriteFile(descriptor, []byte(validLegacyDescriptor), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// If the removed adapter were still enabled, an empty PATH makes lookup
+	// fail locally instead of invoking any installed external provider.
+	t.Setenv("PATH", dir)
+	original := os.Args
+	defer func() { os.Args = original }()
+	os.Args = []string{"cfctx-run", "--provider", "portal", "--workspace", "demo", "--foundation", "cdc", "--capability", "deploy", "--descriptor", descriptor, "--", "/usr/bin/true"}
+	if code := mainRun(); code != 2 {
+		t.Fatalf("legacy provider exit code = %d, want 2", code)
 	}
 }
 

@@ -164,9 +164,10 @@ cfctx prompt zsh >> ~/.zshrc       # (or: cfctx prompt bash)
 ## Workspace credentials
 
 The optional Go companion [`cfctx-run`](docs/workspace-credentials.md) retrieves
-workspace credentials through portal SSO or a bound loopback MCP helper and runs
-a command with isolated, verified targets. It is built and installed separately;
-the interactive shell workflow below remains unchanged.
+workspace credentials through a bound loopback MCP helper, or accepts
+producer-supplied CF request v1 credentials, and runs a command with isolated,
+verified targets. It is built and installed separately; the interactive shell
+workflow below remains unchanged.
 
 ## Daily use
 

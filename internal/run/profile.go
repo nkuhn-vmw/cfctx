@@ -49,7 +49,6 @@ type Descriptor struct {
 	Namespace        string   `json:"namespace"`
 	Targets          Targets  `json:"targets"`
 	CredentialFields []string `json:"credentialFields"`
-	PortalContext    string   `json:"portalContext,omitempty"`
 	MCPEndpoint      string   `json:"mcpEndpoint,omitempty"`
 }
 
