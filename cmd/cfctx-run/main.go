@@ -51,11 +51,17 @@ func mainRun() int {
 	profile, err := source.Resolve(lookup, selection)
 	cancel()
 	if err != nil {
+		if ctx.Err() != nil {
+			return 130
+		}
 		fmt.Fprintln(os.Stderr, "cfctx-run: workspace credential retrieval failed; check provider authorization and configuration")
 		return 1
 	}
 	code, err := run.Execute(ctx, profile, d, selection, flags.Args(), os.Stdin, os.Stdout, os.Stderr)
 	if err != nil {
+		if ctx.Err() != nil {
+			return 130
+		}
 		fmt.Fprintln(os.Stderr, "cfctx-run:", err)
 		return 1
 	}
