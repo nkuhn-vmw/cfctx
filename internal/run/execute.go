@@ -46,28 +46,81 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	return n, nil
 }
 func process(ctx context.Context, env []string, name string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.Command(name, args...)
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		if err == syscall.ESRCH {
-			return os.ErrProcessDone
-		}
+	return cmd
+}
+func waitProcess(ctx context.Context, cmd *exec.Cmd) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err := cmd.Start(); err != nil {
 		return err
 	}
-	cmd.WaitDelay = 3 * time.Second
-	return cmd
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if ctx.Err() != nil {
+			return terminateProcessGroup(ctx, cmd, nil, true)
+		}
+		return err
+	case <-ctx.Done():
+		return terminateProcessGroup(ctx, cmd, done, false)
+	}
+}
+
+func terminateProcessGroup(ctx context.Context, cmd *exec.Cmd, done <-chan error, leaderDone bool) error {
+	sig := syscall.SIGTERM
+	if cause := context.Cause(ctx); cause != nil {
+		if requested, ok := cause.(SignalCause); ok {
+			sig = syscall.Signal(requested)
+		}
+	}
+	_ = syscall.Kill(-cmd.Process.Pid, sig)
+	timer := time.NewTimer(3 * time.Second)
+	tick := time.NewTicker(25 * time.Millisecond)
+	defer timer.Stop()
+	defer tick.Stop()
+	groupGone := false
+	for !groupGone {
+		select {
+		case <-done:
+			leaderDone = true
+			done = nil
+		case <-tick.C:
+			if err := syscall.Kill(-cmd.Process.Pid, 0); err == syscall.ESRCH {
+				groupGone = true
+			}
+		case <-timer.C:
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			groupGone = true
+		}
+	}
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	for {
+		if err := syscall.Kill(-cmd.Process.Pid, 0); err == syscall.ESRCH {
+			break
+		}
+		select {
+		case <-done:
+			leaderDone = true
+			done = nil
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+	if !leaderDone && done != nil {
+		<-done
+	}
+	return ctx.Err()
 }
 func capture(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	cmd := process(ctx, env, name, args...)
 	var out boundedBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err != nil || out.overflow {
+	if err := waitProcess(ctx, cmd); err != nil || out.overflow {
 		return nil, ErrCommand
 	}
 	return out.data, nil
@@ -185,12 +238,7 @@ func Execute(ctx context.Context, p Profile, d Descriptor, s Selection, args []s
 	cmd.Stdin = childStdin
 	cmd.Stdout = out
 	cmd.Stderr = errOut
-	err = cmd.Start()
-	if err == nil {
-		if waitErr := cmd.Wait(); waitErr != nil {
-			err = waitErr
-		}
-	}
+	err = waitProcess(ctx, cmd)
 	if ctx.Err() != nil {
 		return 130, nil
 	}

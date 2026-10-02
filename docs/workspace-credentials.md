@@ -92,6 +92,35 @@ The helper performs MCP initialize/initialized and `secret_get` without making
 the value a model-visible tool response. Stateless JSON and session/SSE are
 supported. Stale cached values and MCP errors are refused.
 
+## Producer-supplied CF request v1
+
+`cfctx-run` also accepts the additive generic CF request contract. Check support
+before retrieving credentials:
+
+```bash
+cfctx-run --contract
+# {"schemas":["cfctx.run.request/v1"],"requestMaxBytes":65536,"terminalStdin":"eof"}
+```
+
+The producer sends exactly one `cfctx.run.request/v1` JSON object through an
+anonymous pipe on file descriptor 3, then closes the pipe. It launches the
+runner concurrently with writing the request so the 64 KiB limit cannot fill
+the pipe before the runner starts reading. Credentials never belong in argv,
+shell text, logs or a request file. For example, when a trusted producer writes
+the complete request to stdout:
+
+```bash
+cfctx-run --request-fd 3 -- cf apps 3< <(request-producer)
+```
+
+The request contains only `schema`, `targets.cf.{api,orgGuid,spaceGuid}`, and
+`credentials.{CF_USERNAME,CF_PASSWORD}`. The runner verifies the HTTPS API,
+org and space GUID relationship, and the resulting TLS-enabled CF CLI target
+before launching the command. It accepts only fd 3, reads at most 65,536 bytes,
+and times out after 30 seconds if the producer does not close the pipe. This
+mode is CF-only; existing descriptor-backed portal and MCP invocations remain
+available for migration.
+
 ## Isolation and limits
 
 Each invocation reloads credentials. Duplicate/unknown JSON keys, mismatched

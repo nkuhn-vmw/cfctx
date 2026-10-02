@@ -150,7 +150,11 @@ func TestCLIProcess(t *testing.T) {
 			if strings.Contains(args[1], "organizations") {
 				fmt.Printf(`{"guid":%q,"name":"fixture-org"}`, orgID)
 			} else {
-				fmt.Printf(`{"guid":%q,"name":"fixture-space","relationships":{"organization":{"data":{"guid":%q}}}}`, spaceID, orgID)
+				parent := orgID
+				if os.Getenv("WRONG_PARENT") == "1" {
+					parent = directorID
+				}
+				fmt.Printf(`{"guid":%q,"name":"fixture-space","relationships":{"organization":{"data":{"guid":%q}}}}`, spaceID, parent)
 			}
 		case "target":
 			root := filepath.Join(os.Getenv("CF_HOME"), ".cf")
@@ -159,7 +163,11 @@ func TestCLIProcess(t *testing.T) {
 			if os.Getenv("WRONG_TARGET") == "1" {
 				id = orgID
 			}
-			data := fmt.Sprintf(`{"Target":"https://api.example.invalid","OrganizationFields":{"GUID":%q},"SpaceFields":{"GUID":%q},"SSLDisabled":false}`, orgID, id)
+			sslDisabled := false
+			if os.Getenv("WRONG_SSL") == "1" {
+				sslDisabled = true
+			}
+			data := fmt.Sprintf(`{"Target":"https://api.example.invalid","OrganizationFields":{"GUID":%q},"SpaceFields":{"GUID":%q},"SSLDisabled":%t}`, orgID, id, sslDisabled)
 			os.WriteFile(filepath.Join(root, "config.json"), []byte(data), 0600)
 		}
 	case "bosh":
@@ -185,7 +193,7 @@ func TestCLIProcess(t *testing.T) {
 		detail, _ := json.Marshal(map[string]any{"name": path, "type": "json", "value": string(data), "updatedAt": "now"})
 		fmt.Print(string(detail))
 	case "child":
-		if os.Getenv("CF_PASSWORD") != "" || os.Getenv("OM_PASSWORD") != "" || os.Getenv("CREDHUB_SECRET") != "" {
+		if os.Getenv("CF_USERNAME") != "" || os.Getenv("CF_PASSWORD") != "" || os.Getenv("OM_PASSWORD") != "" || os.Getenv("CREDHUB_SECRET") != "" {
 			os.Exit(96)
 		}
 		root := os.Getenv("CF_HOME")
@@ -212,6 +220,38 @@ func TestCLIProcess(t *testing.T) {
 				os.Exit(99)
 			}
 			os.WriteFile(args[0], []byte(line), 0600)
+			os.Exit(0)
+		}
+		if len(args) > 1 && args[1] == "fd3" {
+			var stat syscall.Stat_t
+			if syscall.Fstat(3, &stat) == nil {
+				os.Exit(102)
+			}
+			os.Exit(0)
+		}
+		if len(args) > 1 && args[1] == "signal" {
+			os.WriteFile(args[0]+".started", []byte("ready"), 0600)
+			received := make(chan os.Signal, 1)
+			signal.Notify(received, os.Interrupt, syscall.SIGTERM)
+			got := <-received
+			os.WriteFile(args[0], []byte(got.String()), 0600)
+			os.Exit(0)
+		}
+		if len(args) > 1 && (args[1] == "stubborn" || args[1] == "leader-exits") {
+			mode := args[1]
+			os.WriteFile(args[0]+".pgid", []byte(fmt.Sprint(os.Getpid())), 0600)
+			descendant := exec.Command("sh", "-c", "trap '' TERM; printf ready > \"$1\"; while :; do sleep 10; done", "descendant", args[0]+".descendant")
+			if descendant.Start() != nil {
+				os.Exit(103)
+			}
+			os.WriteFile(args[0]+".started", []byte("ready"), 0600)
+			if mode == "leader-exits" {
+				received := make(chan os.Signal, 1)
+				signal.Notify(received, syscall.SIGTERM)
+				<-received
+				os.Exit(0)
+			}
+			_ = descendant.Wait()
 			os.Exit(0)
 		}
 		os.WriteFile(args[0], []byte(root), 0600)
