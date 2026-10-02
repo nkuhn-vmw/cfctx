@@ -51,7 +51,7 @@ files = []
 for os_name, arch in (("linux", "amd64"), ("linux", "arm64"), ("darwin", "amd64"), ("darwin", "arm64")):
     name = f"cfctx-run-{os_name}-{arch}"
     digest = hashlib.sha256((root / name).read_bytes()).hexdigest()
-    build_info = (work / f"{name}.buildinfo").read_text()
+    build_info = "\n".join((work / f"{name}.buildinfo").read_text().splitlines()[1:]) + "\n"
     files.append({"os": os_name, "arch": arch, "file": name, "sha256": digest, "goVersionInfo": build_info})
 (root / "checksums.json").write_text(json.dumps(files, indent=2) + "\n")
 (root / "release.json").write_text(json.dumps({

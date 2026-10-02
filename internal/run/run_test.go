@@ -189,7 +189,7 @@ func TestCLIProcess(t *testing.T) {
 			os.Exit(97)
 		}
 		if len(args) > 1 && args[1] == "descendant" {
-			child := exec.Command("sh", "-c", "sleep 1; printf alive > \"$1\"", "descendant", args[0])
+			child := exec.Command("sh", "-c", "sleep 2; printf alive > \"$1\"", "descendant", args[0])
 			if child.Start() != nil {
 				os.Exit(98)
 			}
@@ -295,7 +295,7 @@ func TestExecuteCancellationKillsDescendantProcess(t *testing.T) {
 	if code := <-done; code != 130 {
 		t.Fatalf("cancel code %d", code)
 	}
-	time.Sleep(1200 * time.Millisecond)
+	time.Sleep(2200 * time.Millisecond)
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("cancel left descendant process running")
 	}
