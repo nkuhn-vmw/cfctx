@@ -116,6 +116,10 @@ and stderr pass through unchanged, so an explicitly requested command can still
 print its credentials. Agents with arbitrary shell/filesystem access can read
 credentials granted to them or modify a descriptor they own. Target-side roles
 and CredHub ACLs are the authorization boundaries; this helper is not a sandbox.
+When stdin is a controlling terminal, the child process group temporarily takes
+foreground ownership so terminal reads and Ctrl-C behave normally. Cancellation
+kills that process group, then restores the caller's foreground group. Non-TTY
+commands keep their own process group for the same cancellation cleanup.
 The child's home directory stays unchanged. Isolation covers CF/BOSH token
 state and the listed environment variables; it does not isolate existing
 `om`, `credhub`, `uaac` or Kubernetes files in the user's home directory.

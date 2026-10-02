@@ -1,6 +1,7 @@
 package run
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,9 +10,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -68,6 +72,37 @@ func TestCleanEnvironment(t *testing.T) {
 	env := CleanEnvironment([]string{"CF_HOME=old", "BOSH_CLIENT=admin", "OM_PASSWORD=old", "UAA_TOKEN=old", "CREDHUB_SECRET=old", "VCAP_SERVICES=old", "KLPORTAL_TOKEN=old", "PATH=/bin", "TERM=xterm"})
 	if strings.Join(env, ";") != "PATH=/bin;TERM=xterm" {
 		t.Fatal("inherited credential remained")
+	}
+}
+
+func TestTerminalDetectionRejectsDevNull(t *testing.T) {
+	device, err := os.Open("/dev/null")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer device.Close()
+	if _, err := terminalForeground(device.Fd()); err == nil {
+		t.Fatal("/dev/null was mistaken for a controlling terminal")
+	}
+}
+
+func TestInteractiveTerminalHandoff(t *testing.T) {
+	if os.Getenv("CFCTX_INTERACTIVE_TEST") != "1" {
+		return
+	}
+	if _, err := terminalForeground(os.Stdin.Fd()); err != nil {
+		t.Skip("test stdin is not a controlling terminal")
+	}
+	toolDir := tools(t)
+	p, d, s := fixture()
+	marker := filepath.Join(t.TempDir(), "terminal-input")
+	code, err := Execute(context.Background(), p, d, s, []string{filepath.Join(toolDir, "child"), marker, "readline"}, os.Stdin, io.Discard, io.Discard)
+	if err != nil || code != 0 {
+		t.Fatalf("interactive child returned %d: %v", code, err)
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil || string(data) != "cfctx-terminal-input\n" {
+		t.Fatalf("terminal input was not delivered: %q, %v", data, err)
 	}
 }
 
@@ -149,6 +184,23 @@ func TestCLIProcess(t *testing.T) {
 		if err != nil || info.Mode().Perm() != 0700 {
 			os.Exit(97)
 		}
+		if len(args) > 1 && args[1] == "descendant" {
+			child := exec.Command("sleep", "30")
+			if child.Start() != nil {
+				os.Exit(98)
+			}
+			os.WriteFile(args[0], []byte(root+"\n"+strconv.Itoa(child.Process.Pid)), 0600)
+			_ = child.Wait()
+			os.Exit(0)
+		}
+		if len(args) > 1 && args[1] == "readline" {
+			line, readErr := bufio.NewReader(os.Stdin).ReadString('\n')
+			if readErr != nil {
+				os.Exit(99)
+			}
+			os.WriteFile(args[0], []byte(line), 0600)
+			os.Exit(0)
+		}
 		os.WriteFile(args[0], []byte(root), 0600)
 		if len(args) > 1 && args[1] == "wait" {
 			time.Sleep(10 * time.Second)
@@ -207,6 +259,45 @@ func TestExecuteNormalizesTrailingCFAPISlash(t *testing.T) {
 	code, err := Execute(context.Background(), p, d, s, []string{"child", filepath.Join(t.TempDir(), "marker")}, nil, io.Discard, io.Discard)
 	if err != nil || code != 17 {
 		t.Fatalf("trailing-slash API failed: code %d, err %v", code, err)
+	}
+}
+
+func TestExecuteCancellationKillsDescendantProcess(t *testing.T) {
+	toolDir := tools(t)
+	p, d, s := fixture()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	marker := filepath.Join(t.TempDir(), "child-state")
+	done := make(chan int, 1)
+	go func() {
+		code, _ := Execute(ctx, p, d, s, []string{filepath.Join(toolDir, "child"), marker, "descendant"}, nil, io.Discard, io.Discard)
+		done <- code
+	}()
+	deadline := time.Now().Add(15 * time.Second)
+	var fields []string
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(marker)
+		if err == nil {
+			fields = strings.Split(string(data), "\n")
+			if len(fields) == 2 {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(fields) != 2 {
+		t.Fatal("descendant fixture did not start")
+	}
+	childPID, err := strconv.Atoi(fields[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if code := <-done; code != 130 {
+		t.Fatalf("cancel code %d", code)
+	}
+	if err := syscall.Kill(childPID, 0); err == nil {
+		t.Fatal("cancel left descendant process running")
 	}
 }
 func TestExecuteDenialsDoNotRunChild(t *testing.T) {

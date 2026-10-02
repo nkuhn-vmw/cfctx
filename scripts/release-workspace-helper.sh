@@ -9,6 +9,10 @@ if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
 fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
+if ! git diff --quiet || ! git diff --cached --quiet || [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+  echo "release source must be clean and fully committed" >&2
+  exit 1
+fi
 mkdir -p "$output"
 commit="$(git rev-parse HEAD)"
 go_version="$(go version | awk '{print $3}')"

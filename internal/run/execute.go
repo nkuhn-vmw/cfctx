@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -45,21 +46,19 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	b.data = append(b.data, p...)
 	return n, nil
 }
-func process(ctx context.Context, env []string, name string, interactive bool, args ...string) *exec.Cmd {
+func process(ctx context.Context, env []string, name string, foregroundFD int, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = env
-	if !interactive {
+	if foregroundFD >= 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Foreground: true, Ctty: foregroundFD}
+	} else {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return nil
 		}
-		pid := cmd.Process.Pid
-		if !interactive {
-			pid = -pid
-		}
-		err := syscall.Kill(pid, syscall.SIGKILL)
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		if err == syscall.ESRCH {
 			return os.ErrProcessDone
 		}
@@ -69,7 +68,7 @@ func process(ctx context.Context, env []string, name string, interactive bool, a
 	return cmd
 }
 func capture(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
-	cmd := process(ctx, env, name, false, args...)
+	cmd := process(ctx, env, name, -1, args...)
 	var out boundedBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard
@@ -181,17 +180,34 @@ func Execute(ctx context.Context, p Profile, d Descriptor, s Selection, args []s
 			childEnv = append(childEnv, v)
 		}
 	}
-	interactive := false
+	foregroundFD := -1
+	var terminalPgrp int
 	if file, ok := in.(*os.File); ok {
-		if info, statErr := file.Stat(); statErr == nil && info.Mode()&os.ModeCharDevice != 0 {
-			interactive = true
+		if pgrp, ttyErr := terminalForeground(file.Fd()); ttyErr == nil {
+			foregroundFD = int(file.Fd())
+			terminalPgrp = pgrp
 		}
 	}
-	cmd := process(ctx, childEnv, args[0], interactive, args[1:]...)
+	cmd := process(ctx, childEnv, args[0], foregroundFD, args[1:]...)
 	cmd.Stdin = in
 	cmd.Stdout = out
 	cmd.Stderr = errOut
-	err = cmd.Run()
+	err = cmd.Start()
+	if err == nil {
+		if waitErr := cmd.Wait(); waitErr != nil {
+			err = waitErr
+		}
+	}
+	if foregroundFD >= 0 {
+		// The command temporarily owns the terminal foreground group. Restore
+		// the caller's group while SIGTTOU is ignored, as shells do internally.
+		signal.Ignore(syscall.SIGTTOU)
+		restoreErr := setTerminalForeground(uintptr(foregroundFD), terminalPgrp)
+		signal.Reset(syscall.SIGTTOU)
+		if err == nil && restoreErr != nil {
+			err = restoreErr
+		}
+	}
 	if ctx.Err() != nil {
 		return 130, nil
 	}
