@@ -155,3 +155,16 @@ jobs:
           installed="$tmp_home/.local/share/cfctx/cfctx.sh"
           [[ -f "$installed" ]] || { echo "installed file missing"; exit 1; }
           bash -c "HOME=$tmp_home source '$installed' && cfctx version"
+
+  workspace-helper:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - run: go test ./...
+      - run: go build -trimpath ./cmd/cfctx-run
