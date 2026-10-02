@@ -177,7 +177,7 @@ func Execute(ctx context.Context, p Profile, d Descriptor, s Selection, args []s
 	}
 	childStdin := in
 	if file, ok := in.(*os.File); ok {
-		if _, ttyErr := terminalForeground(file.Fd()); ttyErr == nil {
+		if terminalIsTTY(file.Fd()) {
 			childStdin = nil // Agent deployment commands must not wait on an interactive prompt.
 		}
 	}

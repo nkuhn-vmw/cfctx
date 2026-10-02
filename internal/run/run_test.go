@@ -12,9 +12,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -80,6 +82,9 @@ func TestTerminalDetectionRejectsDevNull(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer device.Close()
+	if terminalIsTTY(device.Fd()) {
+		t.Fatal("/dev/null was mistaken for a terminal")
+	}
 	if _, err := terminalForeground(device.Fd()); err == nil {
 		t.Fatal("/dev/null was mistaken for a controlling terminal")
 	}
@@ -298,6 +303,55 @@ func TestExecuteCancellationKillsDescendantProcess(t *testing.T) {
 	time.Sleep(2200 * time.Millisecond)
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("cancel left descendant process running")
+	}
+}
+
+func TestExecuteSIGQUITCleanup(t *testing.T) {
+	tools(t)
+	p, d, s := fixture()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGQUIT)
+	defer stop()
+	marker := filepath.Join(t.TempDir(), "token-root")
+	done := make(chan int, 1)
+	go func() {
+		code, _ := Execute(ctx, p, d, s, []string{"child", marker, "wait"}, nil, io.Discard, io.Discard)
+		done <- code
+	}()
+	deadline := time.Now().Add(15 * time.Second)
+	var root string
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(marker)
+		if err == nil {
+			root = string(data)
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if root == "" {
+		t.Fatal("child did not start")
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGQUIT); err != nil {
+		t.Fatal(err)
+	}
+	if code := <-done; code != 130 {
+		t.Fatalf("SIGQUIT cancellation code %d", code)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatal("SIGQUIT left temporary token state behind")
+	}
+}
+
+func TestPipedStdinPassedThrough(t *testing.T) {
+	tools(t)
+	p, d, s := fixture()
+	marker := filepath.Join(t.TempDir(), "piped-input")
+	code, err := Execute(context.Background(), p, d, s, []string{"child", marker, "readline"}, strings.NewReader("piped-input\n"), io.Discard, io.Discard)
+	if err != nil || code != 0 {
+		t.Fatalf("piped child returned %d: %v", code, err)
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil || string(data) != "piped-input\n" {
+		t.Fatalf("piped input did not reach the child: %q, %v", data, err)
 	}
 }
 func TestExecuteDenialsDoNotRunChild(t *testing.T) {

@@ -7,6 +7,12 @@ import (
 	"unsafe"
 )
 
+func terminalIsTTY(fd uintptr) bool {
+	var termios syscall.Termios
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, syscall.TCGETS, uintptr(unsafe.Pointer(&termios)))
+	return errno == 0
+}
+
 func terminalForeground(fd uintptr) (int, error) {
 	var termios syscall.Termios
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, syscall.TCGETS, uintptr(unsafe.Pointer(&termios))); errno != 0 {
