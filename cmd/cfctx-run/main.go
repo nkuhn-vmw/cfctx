@@ -12,8 +12,14 @@ import (
 	"github.com/nkuhn-vmw/cfctx/internal/run"
 )
 
+var version = "dev"
+
 func main() { os.Exit(mainRun()) }
 func mainRun() int {
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "version") {
+		fmt.Println("cfctx-run", version)
+		return 0
+	}
 	flags := flag.NewFlagSet("cfctx-run", flag.ContinueOnError)
 	provider := flags.String("provider", "", "portal or mcp")
 	workspace := flags.String("workspace", "", "workspace handle")

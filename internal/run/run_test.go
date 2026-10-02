@@ -198,6 +198,17 @@ func TestExecuteSuccessCleanupAndExitCode(t *testing.T) {
 		t.Fatal("setup output exposed")
 	}
 }
+
+func TestExecuteNormalizesTrailingCFAPISlash(t *testing.T) {
+	tools(t)
+	p, d, s := fixture()
+	p.Targets.CF.API += "/"
+	d.Targets = p.Targets
+	code, err := Execute(context.Background(), p, d, s, []string{"child", filepath.Join(t.TempDir(), "marker")}, nil, io.Discard, io.Discard)
+	if err != nil || code != 17 {
+		t.Fatalf("trailing-slash API failed: code %d, err %v", code, err)
+	}
+}
 func TestExecuteDenialsDoNotRunChild(t *testing.T) {
 	tools(t)
 	for _, key := range []string{"FAIL_AUTH", "WRONG_TARGET", "WRONG_DIRECTOR"} {

@@ -45,15 +45,21 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	b.data = append(b.data, p...)
 	return n, nil
 }
-func process(ctx context.Context, env []string, name string, args ...string) *exec.Cmd {
+func process(ctx context.Context, env []string, name string, interactive bool, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if !interactive {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return nil
 		}
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		pid := cmd.Process.Pid
+		if !interactive {
+			pid = -pid
+		}
+		err := syscall.Kill(pid, syscall.SIGKILL)
 		if err == syscall.ESRCH {
 			return os.ErrProcessDone
 		}
@@ -63,7 +69,7 @@ func process(ctx context.Context, env []string, name string, args ...string) *ex
 	return cmd
 }
 func capture(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
-	cmd := process(ctx, env, name, args...)
+	cmd := process(ctx, env, name, false, args...)
 	var out boundedBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard
@@ -79,7 +85,8 @@ func prepare(ctx context.Context, p Profile, root string) ([]string, error) {
 		env = append(env, k+"="+v)
 	}
 	if t := p.Targets.CF; t != nil {
-		if _, err := capture(ctx, env, "cf", "api", t.API); err != nil {
+		api := strings.TrimSuffix(t.API, "/")
+		if _, err := capture(ctx, env, "cf", "api", api); err != nil {
 			return nil, err
 		}
 		if _, err := capture(ctx, env, "cf", "auth", "--origin", "uaa"); err != nil {
@@ -127,7 +134,7 @@ func prepare(ctx context.Context, p Profile, root string) ([]string, error) {
 			SpaceFields        struct{ GUID string }
 			SSLDisabled        bool
 		}
-		if json.Unmarshal(data, &config) != nil || config.Target != t.API || config.OrganizationFields.GUID != t.OrgGUID || config.SpaceFields.GUID != t.SpaceGUID || config.SSLDisabled {
+		if json.Unmarshal(data, &config) != nil || strings.TrimSuffix(config.Target, "/") != api || config.OrganizationFields.GUID != t.OrgGUID || config.SpaceFields.GUID != t.SpaceGUID || config.SSLDisabled {
 			return nil, ErrCommand
 		}
 	}
@@ -174,7 +181,13 @@ func Execute(ctx context.Context, p Profile, d Descriptor, s Selection, args []s
 			childEnv = append(childEnv, v)
 		}
 	}
-	cmd := process(ctx, childEnv, args[0], args[1:]...)
+	interactive := false
+	if file, ok := in.(*os.File); ok {
+		if info, statErr := file.Stat(); statErr == nil && info.Mode()&os.ModeCharDevice != 0 {
+			interactive = true
+		}
+	}
+	cmd := process(ctx, childEnv, args[0], interactive, args[1:]...)
 	cmd.Stdin = in
 	cmd.Stdout = out
 	cmd.Stderr = errOut

@@ -11,6 +11,12 @@ Build from this reviewed checkout with Go 1.23 or newer:
 go build -trimpath -o build/cfctx-run ./cmd/cfctx-run
 ```
 
+For a release candidate, run `scripts/release-workspace-helper.sh vX.Y.Z`.
+It produces Linux and macOS amd64/arm64 binaries plus `checksums.json` and
+`release.json` in `build/workspace-helper/`. The release metadata records the
+source commit and Go version; verify each binary with the listed SHA-256 before
+pinning it in a consumer. `cfctx-run --version` prints the embedded version.
+
 Put the reviewed binary on the agent's PATH through its normal managed tool
 installation. The existing `install.sh` continues to install only the sourced
 shell function. Hosted packaging should pin the helper binary checksum.
