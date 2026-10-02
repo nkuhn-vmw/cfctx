@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,10 +13,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -86,11 +85,12 @@ func TestTerminalDetectionRejectsDevNull(t *testing.T) {
 	}
 }
 
-func TestInteractiveTerminalHandoff(t *testing.T) {
+func TestInteractiveTerminalInputIsClosed(t *testing.T) {
 	if os.Getenv("CFCTX_INTERACTIVE_TEST") != "1" {
 		return
 	}
-	if _, err := terminalForeground(os.Stdin.Fd()); err != nil {
+	before, err := terminalForeground(os.Stdin.Fd())
+	if err != nil {
 		t.Skip("test stdin is not a controlling terminal")
 	}
 	toolDir := tools(t)
@@ -101,8 +101,12 @@ func TestInteractiveTerminalHandoff(t *testing.T) {
 		t.Fatalf("interactive child returned %d: %v", code, err)
 	}
 	data, err := os.ReadFile(marker)
-	if err != nil || string(data) != "cfctx-terminal-input\n" {
-		t.Fatalf("terminal input was not delivered: %q, %v", data, err)
+	if err != nil || string(data) != "EOF" {
+		t.Fatalf("interactive stdin was not closed: %q, %v", data, err)
+	}
+	after, err := terminalForeground(os.Stdin.Fd())
+	if err != nil || after != before {
+		t.Fatalf("caller foreground group changed: before %d, after %d, error %v", before, after, err)
 	}
 }
 
@@ -185,16 +189,20 @@ func TestCLIProcess(t *testing.T) {
 			os.Exit(97)
 		}
 		if len(args) > 1 && args[1] == "descendant" {
-			child := exec.Command("sleep", "30")
+			child := exec.Command("sh", "-c", "sleep 1; printf alive > \"$1\"", "descendant", args[0])
 			if child.Start() != nil {
 				os.Exit(98)
 			}
-			os.WriteFile(args[0], []byte(root+"\n"+strconv.Itoa(child.Process.Pid)), 0600)
+			os.WriteFile(args[0]+".started", []byte(root), 0600)
 			_ = child.Wait()
 			os.Exit(0)
 		}
 		if len(args) > 1 && args[1] == "readline" {
 			line, readErr := bufio.NewReader(os.Stdin).ReadString('\n')
+			if errors.Is(readErr, io.EOF) {
+				os.WriteFile(args[0], []byte("EOF"), 0600)
+				os.Exit(0)
+			}
 			if readErr != nil {
 				os.Exit(99)
 			}
@@ -274,29 +282,21 @@ func TestExecuteCancellationKillsDescendantProcess(t *testing.T) {
 		done <- code
 	}()
 	deadline := time.Now().Add(15 * time.Second)
-	var fields []string
 	for time.Now().Before(deadline) {
-		data, err := os.ReadFile(marker)
-		if err == nil {
-			fields = strings.Split(string(data), "\n")
-			if len(fields) == 2 {
-				break
-			}
+		if _, err := os.Stat(marker + ".started"); err == nil {
+			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if len(fields) != 2 {
+	if _, err := os.Stat(marker + ".started"); err != nil {
 		t.Fatal("descendant fixture did not start")
-	}
-	childPID, err := strconv.Atoi(fields[1])
-	if err != nil {
-		t.Fatal(err)
 	}
 	cancel()
 	if code := <-done; code != 130 {
 		t.Fatalf("cancel code %d", code)
 	}
-	if err := syscall.Kill(childPID, 0); err == nil {
+	time.Sleep(1200 * time.Millisecond)
+	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("cancel left descendant process running")
 	}
 }

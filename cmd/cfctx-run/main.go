@@ -45,7 +45,7 @@ func mainRun() int {
 		fmt.Fprintln(os.Stderr, "cfctx-run: choose --provider portal or mcp")
 		return 2
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	lookup, cancel := context.WithTimeout(ctx, 30*time.Second)
 	profile, err := source.Resolve(lookup, selection)

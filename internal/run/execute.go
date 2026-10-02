@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -46,14 +45,10 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	b.data = append(b.data, p...)
 	return n, nil
 }
-func process(ctx context.Context, env []string, name string, foregroundFD int, args ...string) *exec.Cmd {
+func process(ctx context.Context, env []string, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = env
-	if foregroundFD >= 0 {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Foreground: true, Ctty: foregroundFD}
-	} else {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return nil
@@ -68,7 +63,7 @@ func process(ctx context.Context, env []string, name string, foregroundFD int, a
 	return cmd
 }
 func capture(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
-	cmd := process(ctx, env, name, -1, args...)
+	cmd := process(ctx, env, name, args...)
 	var out boundedBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard
@@ -180,32 +175,20 @@ func Execute(ctx context.Context, p Profile, d Descriptor, s Selection, args []s
 			childEnv = append(childEnv, v)
 		}
 	}
-	foregroundFD := -1
-	var terminalPgrp int
+	childStdin := in
 	if file, ok := in.(*os.File); ok {
-		if pgrp, ttyErr := terminalForeground(file.Fd()); ttyErr == nil {
-			foregroundFD = int(file.Fd())
-			terminalPgrp = pgrp
+		if _, ttyErr := terminalForeground(file.Fd()); ttyErr == nil {
+			childStdin = nil // Agent deployment commands must not wait on an interactive prompt.
 		}
 	}
-	cmd := process(ctx, childEnv, args[0], foregroundFD, args[1:]...)
-	cmd.Stdin = in
+	cmd := process(ctx, childEnv, args[0], args[1:]...)
+	cmd.Stdin = childStdin
 	cmd.Stdout = out
 	cmd.Stderr = errOut
 	err = cmd.Start()
 	if err == nil {
 		if waitErr := cmd.Wait(); waitErr != nil {
 			err = waitErr
-		}
-	}
-	if foregroundFD >= 0 {
-		// The command temporarily owns the terminal foreground group. Restore
-		// the caller's group while SIGTTOU is ignored, as shells do internally.
-		signal.Ignore(syscall.SIGTTOU)
-		restoreErr := setTerminalForeground(uintptr(foregroundFD), terminalPgrp)
-		signal.Reset(syscall.SIGTTOU)
-		if err == nil && restoreErr != nil {
-			err = restoreErr
 		}
 	}
 	if ctx.Err() != nil {

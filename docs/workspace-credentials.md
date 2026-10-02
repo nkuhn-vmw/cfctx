@@ -116,10 +116,12 @@ and stderr pass through unchanged, so an explicitly requested command can still
 print its credentials. Agents with arbitrary shell/filesystem access can read
 credentials granted to them or modify a descriptor they own. Target-side roles
 and CredHub ACLs are the authorization boundaries; this helper is not a sandbox.
-When stdin is a controlling terminal, the child process group temporarily takes
-foreground ownership so terminal reads and Ctrl-C behave normally. Cancellation
-kills that process group, then restores the caller's foreground group. Non-TTY
-commands keep their own process group for the same cancellation cleanup.
+This provider is for noninteractive deployment commands, such as `cf apps`,
+`cf push`, and `bosh -n deploy`. When stdin is a terminal, the child receives
+EOF so it cannot wait on an interactive prompt or change the caller's job
+control. Piped stdin is passed through. The helper does not support interactive
+SSH or terminal job control; cancellation kills the isolated child process
+group, including its descendants.
 The child's home directory stays unchanged. Isolation covers CF/BOSH token
 state and the listed environment variables; it does not isolate existing
 `om`, `credhub`, `uaac` or Kubernetes files in the user's home directory.

@@ -18,12 +18,3 @@ func terminalForeground(fd uintptr) (int, error) {
 	}
 	return int(pgrp), nil
 }
-
-func setTerminalForeground(fd uintptr, pgrp int) error {
-	value := int32(pgrp)
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, syscall.TIOCSPGRP, uintptr(unsafe.Pointer(&value)))
-	if errno != 0 {
-		return errno
-	}
-	return nil
-}
