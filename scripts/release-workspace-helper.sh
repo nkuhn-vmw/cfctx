@@ -18,7 +18,19 @@ if [[ "$output" != /* ]]; then
 fi
 mkdir -p "$output"
 commit="$(git rev-parse HEAD)"
-go_version="$(go version | awk '{print $3}')"
+toolchain="$(awk '$1 == "toolchain" {print $2}' go.mod)"
+[[ "$toolchain" =~ ^go[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  echo "release requires an exact Go toolchain pin in go.mod" >&2
+  exit 1
+}
+unset GONOSUMDB GOPRIVATE GOINSECURE GOFLAGS
+export GOSUMDB=sum.golang.org
+export GOENV=off GOTOOLCHAIN="$toolchain" GOWORK=off
+go_version="$(go env GOVERSION)"
+[[ "$go_version" == "$toolchain" ]] || {
+  echo "release Go toolchain mismatch: expected $toolchain, got $go_version" >&2
+  exit 1
+}
 release_tag="cfctx-run-$version"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -26,7 +38,7 @@ mkdir "$work/source"
 git archive HEAD | tar -x -C "$work/source"
 cd "$work/source"
 unset GOFLAGS GOAMD64 GOARM64 GOEXPERIMENT GO386 GOARM GOMIPS GOMIPS64
-export GOENV=off GOTOOLCHAIN=local
+export GOENV=off GOTOOLCHAIN="$toolchain" GOWORK=off
 for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   os="${target%/*}"
   arch="${target#*/}"

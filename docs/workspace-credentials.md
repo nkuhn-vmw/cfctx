@@ -5,13 +5,13 @@ one workspace profile, validates it against a reviewed descriptor, authenticates
 in isolated state, and launches a command. It does not modify an interactive
 cfctx context or import credentials from Ops Manager.
 
-Build from this reviewed checkout with Go 1.23 or newer:
+Development builds require at least Go 1.26.8; the module retains the Go 1.23 language level. Release builds select exactly Go 1.26.8:
 
 ```bash
-go build -trimpath -o build/cfctx-run ./cmd/cfctx-run
+GOTOOLCHAIN=go1.26.8 go build -trimpath -o build/cfctx-run ./cmd/cfctx-run
 ```
 
-For a release candidate, run `scripts/release-workspace-helper.sh vX.Y.Z`.
+For a release candidate, run `scripts/release-workspace-helper.sh vX.Y.Z`. The release script selects and verifies the exact pinned toolchain, rather than inheriting an older Go binary from PATH. The build machine needs that toolchain cached or network access to download it.
 It produces Linux and macOS amd64/arm64 binaries plus `checksums.json` and
 `release.json` in `build/workspace-helper/`. The release metadata records the
 source commit and Go version; verify each binary with the listed SHA-256 before
